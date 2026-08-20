@@ -8,10 +8,12 @@ namespace ComputerUse.Mcp.Input;
 internal sealed class ClipboardWorker : IClipboardWorker
 {
     private readonly NativeStaDispatcher _sta;
+    private readonly IInputInjector _input;
 
-    public ClipboardWorker(NativeStaDispatcher sta)
+    public ClipboardWorker(NativeStaDispatcher sta, IInputInjector input)
     {
         _sta = sta;
+        _input = input;
     }
 
     public Task<ClipboardPasteResult> PasteUnicodeAsync(
@@ -20,16 +22,19 @@ internal sealed class ClipboardWorker : IClipboardWorker
         int restoreWaitMs,
         CancellationToken cancellationToken)
     {
-        return _sta.InvokeAsync(() => PasteOnSta(value, confirmForeground, restoreWaitMs), cancellationToken);
+        return _sta.InvokeAsync(() => PasteOnSta(value, confirmForeground, restoreWaitMs, _input), cancellationToken);
     }
 
-    private static ClipboardPasteResult PasteOnSta(string value, Func<bool> confirmForeground, int restoreWaitMs)
+    private static ClipboardPasteResult PasteOnSta(
+        string value,
+        Func<bool> confirmForeground,
+        int restoreWaitMs,
+        IInputInjector input)
     {
         string? previous = null;
         uint afterWrite;
         try
         {
-            _ = NativeMethods.GetClipboardSequenceNumber();
             previous = TryReadUnicode();
             WriteUnicode(value);
             afterWrite = NativeMethods.GetClipboardSequenceNumber();
@@ -42,14 +47,13 @@ internal sealed class ClipboardWorker : IClipboardWorker
         if (!confirmForeground())
             throw new ComputerUseException(ErrorCodes.FocusLost, "Foreground window changed before paste.");
 
-        SendCtrlV();
+        SendCtrlV(input);
 
-        var waitUntil = Environment.TickCount64 + Math.Max(0, restoreWaitMs);
-        while (Environment.TickCount64 < waitUntil)
-            Thread.Sleep(20);
-
-        var current = NativeMethods.GetClipboardSequenceNumber();
-        if (current != afterWrite)
+        if (!ClipboardSequenceWait.StillUnchanged(
+                afterWrite,
+                restoreWaitMs,
+                NativeMethods.GetClipboardSequenceNumber,
+                Thread.Sleep))
         {
             return new ClipboardPasteResult(false, false, "clipboard_not_restored", "Clipboard changed before restore.");
         }
@@ -108,8 +112,12 @@ internal sealed class ClipboardWorker : IClipboardWorker
             throw new ComputerUseException(ErrorCodes.ClipboardFailed, "GlobalLock failed.");
         try
         {
-            Marshal.Copy(value.ToCharArray(), 0, ptr, value.Length);
-            Marshal.WriteInt16(ptr, value.Length * 2, 0);
+            unsafe
+            {
+                var dest = new Span<char>((char*)ptr, value.Length + 1);
+                value.AsSpan().CopyTo(dest);
+                dest[value.Length] = '\0';
+            }
         }
         finally
         {
@@ -141,26 +149,17 @@ internal sealed class ClipboardWorker : IClipboardWorker
         finally { NativeMethods.CloseClipboard(); }
     }
 
-    private static void SendCtrlV()
+    private static void SendCtrlV(IInputInjector input)
     {
-        var adapter = new SendInputAdapter();
-        var ctrl = false;
-        var v = false;
         try
         {
-            adapter.Key(NativeMethods.VK_CONTROL, true, false);
-            ctrl = true;
-            adapter.Key(NativeMethods.VK_V, true, false);
-            v = true;
-            adapter.Key(NativeMethods.VK_V, false, false);
-            v = false;
-            adapter.Key(NativeMethods.VK_CONTROL, false, false);
-            ctrl = false;
+            input.KeyStroke(NativeMethods.VK_V, false, true, false, false);
         }
-        finally
+        catch
         {
-            try { if (v) adapter.Key(NativeMethods.VK_V, false, false); } catch { /* best-effort */ }
-            try { if (ctrl) adapter.Key(NativeMethods.VK_CONTROL, false, false); } catch { /* best-effort */ }
+            try { input.Key(NativeMethods.VK_V, false, false); } catch { /* best-effort */ }
+            try { input.Key(NativeMethods.VK_CONTROL, false, false); } catch { /* best-effort */ }
+            throw;
         }
     }
 }

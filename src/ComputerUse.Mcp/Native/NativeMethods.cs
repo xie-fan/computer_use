@@ -67,7 +67,9 @@ internal static partial class NativeMethods
     public const uint KEYEVENTF_KEYUP = 0x0002;
     public const uint KEYEVENTF_UNICODE = 0x0004;
     public const int WHEEL_DELTA = 120;
+    public const ushort VK_SHIFT = 0x10;
     public const ushort VK_CONTROL = 0x11;
+    public const ushort VK_MENU = 0x12;
     public const ushort VK_V = 0x56;
 
     public const uint CF_UNICODETEXT = 13;
@@ -177,8 +179,16 @@ internal static partial class NativeMethods
     [DllImport("user32.dll")]
     public static extern uint GetDoubleClickTime();
 
-    [DllImport("user32.dll")]
-    public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+    [DllImport("user32.dll", EntryPoint = "SendInput")]
+    private static extern unsafe uint SendInputNative(uint nInputs, INPUT* pInputs, int cbSize);
+
+    public static unsafe uint SendInputs(ReadOnlySpan<INPUT> inputs)
+    {
+        if (inputs.IsEmpty)
+            return 0;
+        fixed (INPUT* ptr = inputs)
+            return SendInputNative((uint)inputs.Length, ptr, Marshal.SizeOf<INPUT>());
+    }
 
     [DllImport("user32.dll")]
     public static extern bool PrintWindow(nint hwnd, nint hdcBlt, uint nFlags);

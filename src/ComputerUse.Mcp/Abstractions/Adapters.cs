@@ -72,12 +72,15 @@ internal interface IInputInjector
 {
     bool SwapMouseButtons { get; }
     int DoubleClickTimeMs { get; }
+    void RefreshMetrics();
     void MoveAbsoluteVirtualDesk(int physicalX, int physicalY);
     ScreenPoint GetCursorPos();
     void MouseButton(MouseButtonKind logicalButton, bool down);
     void Scroll(int dxNotches, int dyNotches);
     void Key(ushort virtualKey, bool down, bool extended);
+    void KeyStroke(ushort virtualKey, bool extended, bool ctrl, bool alt, bool shift);
     void Unicode(char codeUnit, bool down);
+    void UnicodeText(ReadOnlySpan<char> codeUnits);
 }
 
 internal interface IClipboardWorker

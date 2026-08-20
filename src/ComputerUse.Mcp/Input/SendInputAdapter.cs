@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using ComputerUse.Mcp.Abstractions;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Native;
@@ -7,8 +6,56 @@ namespace ComputerUse.Mcp.Input;
 
 internal sealed class SendInputAdapter : IInputInjector
 {
-    public bool SwapMouseButtons => NativeMethods.GetSystemMetrics(NativeMethods.SM_SWAPBUTTON) != 0;
-    public int DoubleClickTimeMs => (int)Math.Max(1, NativeMethods.GetDoubleClickTime());
+    internal delegate uint SendInputsFn(ReadOnlySpan<NativeMethods.INPUT> inputs);
+
+    private const int UnicodeBatchEvents = 64;
+    private readonly SendInputsFn _send;
+
+    private int _virtualX;
+    private int _virtualY;
+    private int _virtualW;
+    private int _virtualH;
+    private bool _swapButtons;
+    private int _doubleClickMs = 500;
+    private bool _metricsLoaded;
+
+    public SendInputAdapter() : this(NativeMethods.SendInputs)
+    {
+    }
+
+    internal SendInputAdapter(SendInputsFn send)
+    {
+        _send = send;
+    }
+
+    public bool SwapMouseButtons
+    {
+        get
+        {
+            EnsureMetrics();
+            return _swapButtons;
+        }
+    }
+
+    public int DoubleClickTimeMs
+    {
+        get
+        {
+            EnsureMetrics();
+            return _doubleClickMs;
+        }
+    }
+
+    public void RefreshMetrics()
+    {
+        _virtualX = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+        _virtualY = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+        _virtualW = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
+        _virtualH = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
+        _swapButtons = NativeMethods.GetSystemMetrics(NativeMethods.SM_SWAPBUTTON) != 0;
+        _doubleClickMs = (int)Math.Max(1, NativeMethods.GetDoubleClickTime());
+        _metricsLoaded = true;
+    }
 
     public ScreenPoint GetCursorPos()
     {
@@ -18,24 +65,12 @@ internal sealed class SendInputAdapter : IInputInjector
 
     public void MoveAbsoluteVirtualDesk(int physicalX, int physicalY)
     {
-        var vx = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
-        var vy = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
-        var vw = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
-        var vh = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
-        var nx = Normalize(physicalX, vx, vw);
-        var ny = Normalize(physicalY, vy, vh);
-        Send(new NativeMethods.INPUT
+        EnsureMetrics();
+        var nx = Normalize(physicalX, _virtualX, _virtualW);
+        var ny = Normalize(physicalY, _virtualY, _virtualH);
+        Send(stackalloc NativeMethods.INPUT[]
         {
-            type = NativeMethods.INPUT_MOUSE,
-            U = new NativeMethods.InputUnion
-            {
-                mi = new NativeMethods.MOUSEINPUT
-                {
-                    dx = nx,
-                    dy = ny,
-                    dwFlags = NativeMethods.MOUSEEVENTF_MOVE | NativeMethods.MOUSEEVENTF_ABSOLUTE | NativeMethods.MOUSEEVENTF_VIRTUALDESK
-                }
-            }
+            MouseMove(nx, ny)
         });
     }
 
@@ -52,88 +87,87 @@ internal sealed class SendInputAdapter : IInputInjector
             (MouseButtonKind.Middle, false) => NativeMethods.MOUSEEVENTF_MIDDLEUP,
             _ => 0
         };
-        Send(new NativeMethods.INPUT
-        {
-            type = NativeMethods.INPUT_MOUSE,
-            U = new NativeMethods.InputUnion { mi = new NativeMethods.MOUSEINPUT { dwFlags = flags } }
-        });
+        Send(stackalloc NativeMethods.INPUT[] { Mouse(flags) });
     }
 
     public void Scroll(int dxNotches, int dyNotches)
     {
+        var count = (dyNotches != 0 ? 1 : 0) + (dxNotches != 0 ? 1 : 0);
+        if (count == 0)
+            return;
+
+        Span<NativeMethods.INPUT> events = stackalloc NativeMethods.INPUT[count];
+        var n = 0;
         if (dyNotches != 0)
         {
             var data = unchecked((uint)(-dyNotches * NativeMethods.WHEEL_DELTA));
-            Send(new NativeMethods.INPUT
-            {
-                type = NativeMethods.INPUT_MOUSE,
-                U = new NativeMethods.InputUnion
-                {
-                    mi = new NativeMethods.MOUSEINPUT
-                    {
-                        mouseData = data,
-                        dwFlags = NativeMethods.MOUSEEVENTF_WHEEL
-                    }
-                }
-            });
+            events[n++] = Mouse(NativeMethods.MOUSEEVENTF_WHEEL, data);
         }
 
         if (dxNotches != 0)
         {
             var data = unchecked((uint)(dxNotches * NativeMethods.WHEEL_DELTA));
-            Send(new NativeMethods.INPUT
-            {
-                type = NativeMethods.INPUT_MOUSE,
-                U = new NativeMethods.InputUnion
-                {
-                    mi = new NativeMethods.MOUSEINPUT
-                    {
-                        mouseData = data,
-                        dwFlags = NativeMethods.MOUSEEVENTF_HWHEEL
-                    }
-                }
-            });
+            events[n++] = Mouse(NativeMethods.MOUSEEVENTF_HWHEEL, data);
         }
+
+        Send(events[..n]);
     }
 
     public void Key(ushort virtualKey, bool down, bool extended)
     {
-        uint flags = 0;
-        if (!down)
-            flags |= NativeMethods.KEYEVENTF_KEYUP;
-        if (extended)
-            flags |= NativeMethods.KEYEVENTF_EXTENDEDKEY;
-        Send(new NativeMethods.INPUT
-        {
-            type = NativeMethods.INPUT_KEYBOARD,
-            U = new NativeMethods.InputUnion
-            {
-                ki = new NativeMethods.KEYBDINPUT
-                {
-                    wVk = virtualKey,
-                    dwFlags = flags
-                }
-            }
-        });
+        Send(stackalloc NativeMethods.INPUT[] { Keyboard(virtualKey, down, extended) });
+    }
+
+    public void KeyStroke(ushort virtualKey, bool extended, bool ctrl, bool alt, bool shift)
+    {
+        Span<NativeMethods.INPUT> events = stackalloc NativeMethods.INPUT[8];
+        var n = 0;
+        if (ctrl)
+            events[n++] = Keyboard(NativeMethods.VK_CONTROL, true, false);
+        if (alt)
+            events[n++] = Keyboard(NativeMethods.VK_MENU, true, false);
+        if (shift)
+            events[n++] = Keyboard(NativeMethods.VK_SHIFT, true, false);
+        events[n++] = Keyboard(virtualKey, true, extended);
+        events[n++] = Keyboard(virtualKey, false, extended);
+        if (shift)
+            events[n++] = Keyboard(NativeMethods.VK_SHIFT, false, false);
+        if (alt)
+            events[n++] = Keyboard(NativeMethods.VK_MENU, false, false);
+        if (ctrl)
+            events[n++] = Keyboard(NativeMethods.VK_CONTROL, false, false);
+        Send(events[..n]);
     }
 
     public void Unicode(char codeUnit, bool down)
     {
-        uint flags = NativeMethods.KEYEVENTF_UNICODE;
-        if (!down)
-            flags |= NativeMethods.KEYEVENTF_KEYUP;
-        Send(new NativeMethods.INPUT
+        Send(stackalloc NativeMethods.INPUT[] { UnicodeKey(codeUnit, down) });
+    }
+
+    public void UnicodeText(ReadOnlySpan<char> codeUnits)
+    {
+        Span<NativeMethods.INPUT> buffer = stackalloc NativeMethods.INPUT[UnicodeBatchEvents];
+        var n = 0;
+        foreach (var ch in codeUnits)
         {
-            type = NativeMethods.INPUT_KEYBOARD,
-            U = new NativeMethods.InputUnion
+            if (n + 2 > buffer.Length)
             {
-                ki = new NativeMethods.KEYBDINPUT
-                {
-                    wScan = codeUnit,
-                    dwFlags = flags
-                }
+                Send(buffer[..n]);
+                n = 0;
             }
-        });
+
+            buffer[n++] = UnicodeKey(ch, true);
+            buffer[n++] = UnicodeKey(ch, false);
+        }
+
+        if (n > 0)
+            Send(buffer[..n]);
+    }
+
+    private void EnsureMetrics()
+    {
+        if (!_metricsLoaded)
+            RefreshMetrics();
     }
 
     private MouseButtonKind ToPhysical(MouseButtonKind logical)
@@ -160,10 +194,102 @@ internal sealed class SendInputAdapter : IInputInjector
         return n;
     }
 
-    private static void Send(NativeMethods.INPUT input)
+    private void Send(ReadOnlySpan<NativeMethods.INPUT> inputs)
     {
-        var sent = NativeMethods.SendInput(1, [input], Marshal.SizeOf<NativeMethods.INPUT>());
-        if (sent != 1)
-            throw new ComputerUseException(ErrorCodes.ActionFailed, "SendInput was rejected by the OS.");
+        if (inputs.IsEmpty)
+            return;
+        var sent = _send(inputs);
+        if (sent == (uint)inputs.Length)
+            return;
+
+        if ((sent & 1) == 1)
+            TryReleaseLastKeyboardDown(inputs[(int)sent - 1]);
+
+        throw new ComputerUseException(ErrorCodes.ActionFailed, "SendInput was rejected by the OS.");
+    }
+
+    private void TryReleaseLastKeyboardDown(NativeMethods.INPUT last)
+    {
+        if (last.type != NativeMethods.INPUT_KEYBOARD)
+            return;
+        if ((last.U.ki.dwFlags & NativeMethods.KEYEVENTF_KEYUP) != 0)
+            return;
+        try
+        {
+            var up = last;
+            up.U.ki.dwFlags |= NativeMethods.KEYEVENTF_KEYUP;
+            _ = _send([up]);
+        }
+        catch
+        {
+            // best-effort; operate finally may still ReleaseAll
+        }
+    }
+
+    private static NativeMethods.INPUT MouseMove(int nx, int ny) => new()
+    {
+        type = NativeMethods.INPUT_MOUSE,
+        U = new NativeMethods.InputUnion
+        {
+            mi = new NativeMethods.MOUSEINPUT
+            {
+                dx = nx,
+                dy = ny,
+                dwFlags = NativeMethods.MOUSEEVENTF_MOVE | NativeMethods.MOUSEEVENTF_ABSOLUTE | NativeMethods.MOUSEEVENTF_VIRTUALDESK
+            }
+        }
+    };
+
+    private static NativeMethods.INPUT Mouse(uint flags, uint mouseData = 0) => new()
+    {
+        type = NativeMethods.INPUT_MOUSE,
+        U = new NativeMethods.InputUnion
+        {
+            mi = new NativeMethods.MOUSEINPUT
+            {
+                mouseData = mouseData,
+                dwFlags = flags
+            }
+        }
+    };
+
+    private static NativeMethods.INPUT Keyboard(ushort virtualKey, bool down, bool extended)
+    {
+        uint flags = 0;
+        if (!down)
+            flags |= NativeMethods.KEYEVENTF_KEYUP;
+        if (extended)
+            flags |= NativeMethods.KEYEVENTF_EXTENDEDKEY;
+        return new NativeMethods.INPUT
+        {
+            type = NativeMethods.INPUT_KEYBOARD,
+            U = new NativeMethods.InputUnion
+            {
+                ki = new NativeMethods.KEYBDINPUT
+                {
+                    wVk = virtualKey,
+                    dwFlags = flags
+                }
+            }
+        };
+    }
+
+    private static NativeMethods.INPUT UnicodeKey(char codeUnit, bool down)
+    {
+        uint flags = NativeMethods.KEYEVENTF_UNICODE;
+        if (!down)
+            flags |= NativeMethods.KEYEVENTF_KEYUP;
+        return new NativeMethods.INPUT
+        {
+            type = NativeMethods.INPUT_KEYBOARD,
+            U = new NativeMethods.InputUnion
+            {
+                ki = new NativeMethods.KEYBDINPUT
+                {
+                    wScan = codeUnit,
+                    dwFlags = flags
+                }
+            }
+        };
     }
 }

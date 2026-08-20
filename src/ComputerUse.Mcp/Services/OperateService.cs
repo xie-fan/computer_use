@@ -2,6 +2,7 @@ using ComputerUse.Mcp.Abstractions;
 using ComputerUse.Mcp.Coordination;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Identity;
+using ComputerUse.Mcp.Input;
 using Microsoft.Extensions.Logging;
 
 namespace ComputerUse.Mcp.Services;
@@ -103,6 +104,7 @@ internal sealed class OperateService
             AccessGuards.EnsureInteractive(_session);
             AccessGuards.EnsureCurrentDesktop(_desktops, token.Hwnd);
             AccessGuards.EnsureIntegrity(_processes, token.Pid);
+            _input.RefreshMetrics();
             if (_host.IsHostProcess(token.Pid))
                 throw new ComputerUseException(ErrorCodes.HostWindowForbidden, "operate_window is forbidden on HostWindow.");
 
@@ -220,9 +222,9 @@ internal sealed class OperateService
     private async Task ClickAsync(ClickAction click, TargetTokenPayload token, FrameRecord frame, IReadOnlyList<MonitorInfo> monitors, InjectionTracker tracker, CancellationToken cancellationToken)
     {
         var point = CoordinateMapper.MapImageToScreen(frame, click.X, click.Y);
+        HitTest(point, token, monitors);
         for (var n = 0; n < click.Count; n++)
         {
-            HitTest(point, token, monitors);
             MoveTo(point, tracker);
             tracker.MouseDown(click.Button);
             tracker.MouseUp(click.Button);
@@ -266,44 +268,33 @@ internal sealed class OperateService
     private void Key(KeyAction key, InjectionTracker tracker)
     {
         var mods = key.Modifiers;
-        void DownMod(string name, ushort vk)
-        {
-            if (mods.Contains(name, StringComparer.Ordinal))
-                tracker.KeyDown(vk, false);
-        }
-
-        DownMod("Ctrl", 0x11);
-        DownMod("Alt", 0x12);
-        DownMod("Shift", 0x10);
+        var ctrl = mods.Contains("Ctrl", StringComparer.Ordinal);
+        var alt = mods.Contains("Alt", StringComparer.Ordinal);
+        var shift = mods.Contains("Shift", StringComparer.Ordinal);
         var vk = KeyWhitelist.VirtualKey(key.Key);
-        tracker.KeyDown(vk, KeyWhitelist.IsExtendedKey(key.Key));
-        tracker.KeyUp(vk, KeyWhitelist.IsExtendedKey(key.Key));
-        if (mods.Contains("Shift", StringComparer.Ordinal)) tracker.KeyUp(0x10, false);
-        if (mods.Contains("Alt", StringComparer.Ordinal)) tracker.KeyUp(0x12, false);
-        if (mods.Contains("Ctrl", StringComparer.Ordinal)) tracker.KeyUp(0x11, false);
+        tracker.KeyStroke(vk, KeyWhitelist.IsExtendedKey(key.Key), ctrl, alt, shift);
     }
 
     private void Text(string value, InjectionTracker tracker)
     {
-        for (var i = 0; i < value.Length; i++)
+        var i = 0;
+        while (i < value.Length)
         {
             var ch = value[i];
-            if (ch == '\r')
+            if (ch == '\r' || ch == '\n')
             {
-                if (i + 1 < value.Length && value[i + 1] == '\n')
+                if (ch == '\r' && i + 1 < value.Length && value[i + 1] == '\n')
                     i++;
                 tracker.KeyDown(0x0D, false);
                 tracker.KeyUp(0x0D, false);
+                i++;
                 continue;
             }
-            if (ch == '\n')
-            {
-                tracker.KeyDown(0x0D, false);
-                tracker.KeyUp(0x0D, false);
-                continue;
-            }
-            tracker.UnicodeDown(ch);
-            tracker.UnicodeUp(ch);
+
+            var start = i;
+            while (i < value.Length && value[i] != '\r' && value[i] != '\n')
+                i++;
+            tracker.UnicodeText(value.AsSpan(start, i - start));
         }
     }
 
@@ -396,101 +387,4 @@ internal sealed class OperateService
 
     private object BuildDetails(int completed, int? failedIndex, bool outcomeKnown, bool mayHaveExecuted, SideEffects side, IReadOnlyList<WarningItem> warnings, string code) =>
         BuildBody(completed, failedIndex, outcomeKnown, mayHaveExecuted, code, side, warnings);
-
-    private sealed class InjectionTracker(IInputInjector input)
-    {
-        private readonly Stack<Pressed> _down = new();
-
-        public void MouseDown(MouseButtonKind button)
-        {
-            input.MouseButton(button, true);
-            _down.Push(Pressed.Mouse(button));
-        }
-
-        public void MouseUp(MouseButtonKind button)
-        {
-            input.MouseButton(button, false);
-            RemoveLast(Pressed.Mouse(button));
-        }
-
-        public void KeyDown(ushort vk, bool extended)
-        {
-            input.Key(vk, true, extended);
-            _down.Push(Pressed.Key(vk, extended));
-        }
-
-        public void KeyUp(ushort vk, bool extended)
-        {
-            input.Key(vk, false, extended);
-            RemoveLast(Pressed.Key(vk, extended));
-        }
-
-        public void UnicodeDown(char ch)
-        {
-            input.Unicode(ch, true);
-            _down.Push(Pressed.Uni(ch));
-        }
-
-        public void UnicodeUp(char ch)
-        {
-            input.Unicode(ch, false);
-            RemoveLast(Pressed.Uni(ch));
-        }
-
-        public void ReleaseAll()
-        {
-            while (_down.Count > 0)
-            {
-                var item = _down.Pop();
-                try
-                {
-                    switch (item.Kind)
-                    {
-                        case PressKind.Mouse:
-                            input.MouseButton((MouseButtonKind)item.Code, false);
-                            break;
-                        case PressKind.Key:
-                            input.Key((ushort)item.Code, false, item.Extended);
-                            break;
-                        case PressKind.Unicode:
-                            input.Unicode((char)item.Code, false);
-                            break;
-                    }
-                }
-                catch
-                {
-                    // never throw from finally cleanup
-                }
-            }
-        }
-
-        private void RemoveLast(Pressed match)
-        {
-            if (_down.Count == 0)
-                return;
-            var tmp = new Stack<Pressed>();
-            var removed = false;
-            while (_down.Count > 0)
-            {
-                var item = _down.Pop();
-                if (!removed && item == match)
-                {
-                    removed = true;
-                    continue;
-                }
-                tmp.Push(item);
-            }
-            while (tmp.Count > 0)
-                _down.Push(tmp.Pop());
-        }
-
-        private readonly record struct Pressed(PressKind Kind, int Code, bool Extended)
-        {
-            public static Pressed Mouse(MouseButtonKind b) => new(PressKind.Mouse, (int)b, false);
-            public static Pressed Key(ushort vk, bool ext) => new(PressKind.Key, vk, ext);
-            public static Pressed Uni(char ch) => new(PressKind.Unicode, ch, false);
-        }
-
-        private enum PressKind { Mouse, Key, Unicode }
-    }
 }
