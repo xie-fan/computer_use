@@ -60,6 +60,7 @@ internal sealed class ScreenshotService
     {
         var started = DateTimeOffset.UtcNow;
         var side = new SideEffects();
+        CapturedBitmap? captured = null;
         try
         {
             var token = _tokens.RequireValid(targetToken, _windows, _processes);
@@ -74,7 +75,7 @@ internal sealed class ScreenshotService
             side.ForegroundChanged = fgAfter != fgBefore;
 
             var live = ReadGeometry(token.Hwnd);
-            var captured = await _capture.CaptureAsync(token.Hwnd, _limits.CaptureTimeoutMs, cancellationToken).ConfigureAwait(false);
+            captured = await _capture.CaptureAsync(token.Hwnd, _limits.CaptureTimeoutMs, cancellationToken).ConfigureAwait(false);
             var fitted = PngCodec.FitLongEdge(captured.Bgra, captured.Width, captured.Height, captured.Stride, _limits.MaxReturnedLongEdge, _limits.MaxPngBytes);
 
             var frameId = "fr1." + Guid.NewGuid().ToString("N");
@@ -136,6 +137,10 @@ internal sealed class ScreenshotService
         {
             _logger.LogInformation("tool={Tool} code={Code} elapsedMs={Elapsed}", "screenshot_window", ex.Code, (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds);
             throw ex.WithDetails(new { sideEffects = side });
+        }
+        finally
+        {
+            captured?.Return();
         }
     }
 

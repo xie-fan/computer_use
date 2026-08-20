@@ -105,6 +105,18 @@ internal sealed class OperationIdCache
     {
         lock (_gate)
         {
+            var now = DateTimeOffset.UtcNow;
+            if (_items.TryGetValue(operationId, out var existing))
+            {
+                existing.OutcomeKnown = outcomeKnown;
+                existing.IsError = isError;
+                existing.Code = code;
+                existing.Message = message;
+                existing.Result = result;
+                existing.CompletedAt = now;
+                return;
+            }
+
             _items[operationId] = new CachedOperation
             {
                 OutcomeKnown = outcomeKnown,
@@ -112,8 +124,8 @@ internal sealed class OperationIdCache
                 Code = code,
                 Message = message,
                 Result = result,
-                StartedAt = DateTimeOffset.UtcNow,
-                CompletedAt = DateTimeOffset.UtcNow
+                StartedAt = now,
+                CompletedAt = now
             };
         }
     }
@@ -131,11 +143,11 @@ internal sealed class OperationIdCache
 
 internal sealed class CachedOperation
 {
-    public bool OutcomeKnown { get; init; }
-    public bool IsError { get; init; }
-    public string? Code { get; init; }
-    public string? Message { get; init; }
-    public object? Result { get; init; }
+    public bool OutcomeKnown { get; set; }
+    public bool IsError { get; set; }
+    public string? Code { get; set; }
+    public string? Message { get; set; }
+    public object? Result { get; set; }
     public DateTimeOffset StartedAt { get; init; }
-    public DateTimeOffset CompletedAt { get; init; }
+    public DateTimeOffset CompletedAt { get; set; }
 }

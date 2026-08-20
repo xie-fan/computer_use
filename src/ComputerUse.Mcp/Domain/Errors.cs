@@ -79,4 +79,8 @@ internal sealed class OperateOutcome
     public string? Code { get; init; }
     public IReadOnlyList<WarningItem> Warnings { get; init; } = [];
     public SideEffects SideEffects { get; init; } = new();
+    public string ContractVersion { get; init; } = Contract.Version;
+    public string ServerVersion { get; init; } = Contract.ServerVersion;
+    public object? Capabilities { get; init; }
+    public object? Limits { get; init; }
 }

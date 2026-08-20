@@ -256,19 +256,21 @@ internal sealed class WgcCaptureAdapter : IDisposable
                 var width = (int)desc.Width;
                 var height = (int)desc.Height;
                 var rowBytes = width * 4;
-                var bgra = new byte[rowBytes * height];
-                for (var y = 0; y < height; y++)
+                CapturedBitmap? captured = CapturedBitmap.Rent(width, height, rowBytes, "wgc");
+                try
                 {
-                    Marshal.Copy(mapped.pData + y * (int)mapped.RowPitch, bgra, y * rowBytes, rowBytes);
+                    for (var y = 0; y < height; y++)
+                    {
+                        Marshal.Copy(mapped.pData + y * (int)mapped.RowPitch, captured.Bgra, y * rowBytes, rowBytes);
+                    }
+                    var result = captured;
+                    captured = null;
+                    return result;
                 }
-                return new CapturedBitmap
+                finally
                 {
-                    Bgra = bgra,
-                    Width = width,
-                    Height = height,
-                    Stride = rowBytes,
-                    Method = "wgc"
-                };
+                    captured?.Return();
+                }
             }
             finally
             {

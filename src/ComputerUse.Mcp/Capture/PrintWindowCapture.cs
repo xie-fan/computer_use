@@ -21,9 +21,10 @@ internal static class PrintWindowHelper
 
         var hwnd = (nint)hwndValue;
         var path = args[2];
+        CapturedBitmap? bmp = null;
         try
         {
-            var bmp = Capture(hwnd);
+            bmp = Capture(hwnd);
             var png = PngCodec.EncodeBgra(bmp.Bgra, bmp.Width, bmp.Height, bmp.Stride);
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllBytes(path, png);
@@ -44,6 +45,10 @@ internal static class PrintWindowHelper
             Console.Error.WriteLine("print-window-helper failed");
             Console.Error.WriteLine(ex.GetType().FullName);
             return 4;
+        }
+        finally
+        {
+            bmp?.Return();
         }
     }
 
@@ -87,18 +92,20 @@ internal static class PrintWindowHelper
                 throw new ComputerUseException(ErrorCodes.CaptureUnsupported, "PrintWindow is not supported for this window.");
 
             var stride = width * 4;
-            var bgra = new byte[stride * height];
-            Marshal.Copy(bits, bgra, 0, bgra.Length);
-            if (IsCompletelyEmpty(bgra))
-                throw new ComputerUseException(ErrorCodes.EmptyFrame, "PrintWindow returned an empty frame.");
-            return new CapturedBitmap
+            CapturedBitmap? captured = CapturedBitmap.Rent(width, height, stride, "print_window");
+            try
             {
-                Bgra = bgra,
-                Width = width,
-                Height = height,
-                Stride = stride,
-                Method = "print_window"
-            };
+                Marshal.Copy(bits, captured.Bgra, 0, captured.ByteLength);
+                if (IsCompletelyEmpty(captured.Bgra, captured.ByteLength))
+                    throw new ComputerUseException(ErrorCodes.EmptyFrame, "PrintWindow returned an empty frame.");
+                var result = captured;
+                captured = null;
+                return result;
+            }
+            finally
+            {
+                captured?.Return();
+            }
         }
         finally
         {
@@ -112,9 +119,9 @@ internal static class PrintWindowHelper
         }
     }
 
-    private static bool IsCompletelyEmpty(byte[] bgra)
+    private static bool IsCompletelyEmpty(byte[] bgra, int length)
     {
-        for (var i = 0; i < bgra.Length; i++)
+        for (var i = 0; i < length; i++)
         {
             if (bgra[i] != 0)
                 return false;
@@ -169,22 +176,19 @@ internal sealed class PrintWindowProcessCapture
             var width = bmp.Width;
             var height = bmp.Height;
             var data = bmp.LockBits(new System.Drawing.Rectangle(0, 0, width, height), System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+            CapturedBitmap? captured = null;
             try
             {
-                var stride = data.Stride;
-                var bgra = new byte[Math.Abs(stride) * height];
-                Marshal.Copy(data.Scan0, bgra, 0, bgra.Length);
-                return new CapturedBitmap
-                {
-                    Bgra = bgra,
-                    Width = width,
-                    Height = height,
-                    Stride = Math.Abs(stride),
-                    Method = "print_window"
-                };
+                var stride = Math.Abs(data.Stride);
+                captured = CapturedBitmap.Rent(width, height, stride, "print_window");
+                Marshal.Copy(data.Scan0, captured.Bgra, 0, captured.ByteLength);
+                var result = captured;
+                captured = null;
+                return result;
             }
             finally
             {
+                captured?.Return();
                 bmp.UnlockBits(data);
             }
         }

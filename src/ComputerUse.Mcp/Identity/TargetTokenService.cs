@@ -7,8 +7,10 @@ namespace ComputerUse.Mcp.Identity;
 
 internal sealed class TargetTokenService
 {
+    internal const int MaxRevoked = 1024;
     private readonly byte[] _key = RandomNumberGenerator.GetBytes(32);
     private readonly HashSet<string> _revoked = new(StringComparer.Ordinal);
+    private readonly Queue<string> _revokedOrder = new();
     private readonly object _gate = new();
 
     public string Issue(nint hwnd, uint pid, long createTimeUtc, string className)
@@ -121,7 +123,16 @@ internal sealed class TargetTokenService
     public void Revoke(string token)
     {
         lock (_gate)
-            _revoked.Add(token);
+        {
+            if (!_revoked.Add(token))
+                return;
+            _revokedOrder.Enqueue(token);
+            while (_revoked.Count > MaxRevoked)
+            {
+                var oldest = _revokedOrder.Dequeue();
+                _revoked.Remove(oldest);
+            }
+        }
     }
 
     public static string FormatHwnd(nint hwnd) =>

@@ -370,19 +370,17 @@ internal sealed class OperateService
     };
 
     private object BuildBody(int completed, int? failedIndex, bool outcomeKnown, bool mayHaveExecuted, string? code, SideEffects side, IReadOnlyList<WarningItem> warnings) =>
-        new
+        new OperateOutcome
         {
-            completedCount = completed,
-            failedIndex,
-            outcomeKnown,
-            mayHaveExecuted,
-            code,
-            warnings,
-            sideEffects = side,
-            contractVersion = Contract.Version,
-            serverVersion = Contract.ServerVersion,
-            capabilities = _list.Capabilities(),
-            limits = _limits.ToPublicDto()
+            CompletedCount = completed,
+            FailedIndex = failedIndex,
+            OutcomeKnown = outcomeKnown,
+            MayHaveExecuted = mayHaveExecuted,
+            Code = code,
+            Warnings = warnings,
+            SideEffects = side,
+            Capabilities = _list.Capabilities(),
+            Limits = _limits.ToPublicDto()
         };
 
     private object BuildDetails(int completed, int? failedIndex, bool outcomeKnown, bool mayHaveExecuted, SideEffects side, IReadOnlyList<WarningItem> warnings, string code) =>

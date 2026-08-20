@@ -6,12 +6,15 @@ namespace ComputerUse.Mcp.Native;
 internal sealed class NativeStaDispatcher : IDisposable
 {
     private readonly BlockingCollection<WorkItem> _queue = new();
+    private readonly AutoResetEvent _wake = new(false);
+    private readonly nint[] _waitHandles;
     private readonly Thread _thread;
     private readonly ManualResetEventSlim _ready = new();
     private bool _disposed;
 
     public NativeStaDispatcher()
     {
+        _waitHandles = [_wake.SafeWaitHandle.DangerousGetHandle()];
         _thread = new Thread(Pump)
         {
             IsBackground = true,
@@ -36,10 +39,11 @@ internal sealed class NativeStaDispatcher : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var item = new WorkItem(() =>
+        var item = new WorkItem(cancellationToken, () =>
         {
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 tcs.TrySetResult(func());
             }
             catch (Exception ex)
@@ -51,6 +55,7 @@ internal sealed class NativeStaDispatcher : IDisposable
         try
         {
             _queue.Add(item, cancellationToken);
+            _wake.Set();
         }
         catch (Exception ex)
         {
@@ -60,22 +65,30 @@ internal sealed class NativeStaDispatcher : IDisposable
         return tcs.Task.WaitAsync(cancellationToken);
     }
 
-    public async Task<T> InvokeAsync<T>(Func<Task<T>> func, CancellationToken cancellationToken)
-    {
-        return await InvokeAsync(() => func().GetAwaiter().GetResult(), cancellationToken).ConfigureAwait(false);
-    }
-
     private void Pump()
     {
         _ = NativeMethods.OleInitialize(0);
         _ready.Set();
         try
         {
-            while (!_queue.IsAddingCompleted)
+            while (true)
             {
-                if (_queue.TryTake(out var item, 15))
-                    item.Run();
                 PumpMessages();
+                while (_queue.TryTake(out var item))
+                {
+                    item.Run();
+                    PumpMessages();
+                }
+
+                if (_queue.IsAddingCompleted)
+                    break;
+
+                _ = NativeMethods.MsgWaitForMultipleObjectsEx(
+                    1,
+                    _waitHandles,
+                    NativeMethods.INFINITE,
+                    NativeMethods.QS_ALLINPUT,
+                    NativeMethods.MWMO_INPUTAVAILABLE);
             }
         }
         finally
@@ -99,16 +112,29 @@ internal sealed class NativeStaDispatcher : IDisposable
             return;
         _disposed = true;
         _queue.CompleteAdding();
+        _wake.Set();
         if (!_thread.Join(TimeSpan.FromSeconds(2)))
         {
             // Background STA thread is abandoned on process exit.
         }
         _queue.Dispose();
+        _wake.Dispose();
         _ready.Dispose();
     }
 
-    private sealed class WorkItem(Action run)
+    private sealed class WorkItem(CancellationToken token, Action run)
     {
-        public void Run() => run();
+        public void Run()
+        {
+            try
+            {
+                token.ThrowIfCancellationRequested();
+                run();
+            }
+            catch (OperationCanceledException)
+            {
+                // WaitAsync already cancelled the waiter; never unwind the STA pump.
+            }
+        }
     }
 }

@@ -520,4 +520,5 @@ internal static partial class NativeMethods
     public const uint WAIT_OBJECT_0 = 0;
     public const uint WAIT_TIMEOUT = 258;
     public const uint WAIT_FAILED = 0xFFFFFFFF;
+    public const uint INFINITE = 0xFFFFFFFF;
 }

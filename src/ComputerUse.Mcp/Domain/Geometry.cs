@@ -58,6 +58,29 @@ internal sealed class CapturedBitmap
     public required int Height { get; init; }
     public required int Stride { get; init; }
     public required string Method { get; init; }
+    public bool Pooled { get; init; }
+
+    public int ByteLength => checked(Stride * Height);
+
+    public static CapturedBitmap Rent(int width, int height, int stride, string method)
+    {
+        var needed = checked(stride * height);
+        return new CapturedBitmap
+        {
+            Bgra = System.Buffers.ArrayPool<byte>.Shared.Rent(needed),
+            Width = width,
+            Height = height,
+            Stride = stride,
+            Method = method,
+            Pooled = true
+        };
+    }
+
+    public void Return()
+    {
+        if (Pooled)
+            System.Buffers.ArrayPool<byte>.Shared.Return(Bgra);
+    }
 }
 
 internal sealed class FrameRecord
