@@ -39,6 +39,8 @@ internal interface IProcessQuery
     uint? TryGetParentPid(uint pid);
     IntegrityLevel GetIntegrityLevel(uint pid);
     IntegrityLevel GetCurrentIntegrityLevel();
+    bool TryGetInfo(uint pid, out ProcessInfo info);
+    IReadOnlyDictionary<uint, uint> CaptureParentMap();
 }
 
 internal interface IVirtualDesktopMembership
@@ -97,6 +99,15 @@ internal interface ICapturePipeline
 internal interface IHostProcessResolver
 {
     bool IsHostProcess(uint pid);
+    bool IsHostProcess(uint pid, long createTimeUtc);
+    void RefreshHostTree();
 }
 
 internal readonly record struct HostIdentity(uint Pid, long CreateTimeUtc, string? ImagePath);
+
+internal readonly record struct ProcessInfo(
+    uint Pid,
+    long CreateTimeUtc,
+    string? ImagePath,
+    string? ProcessName,
+    IntegrityLevel Integrity);

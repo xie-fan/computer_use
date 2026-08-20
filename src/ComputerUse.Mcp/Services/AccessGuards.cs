@@ -28,11 +28,7 @@ internal static class AccessGuards
 
     public static void EnsureIntegrity(IProcessQuery processes, uint pid)
     {
-        var target = processes.GetIntegrityLevel(pid);
-        var self = processes.GetCurrentIntegrityLevel();
-        if (target is IntegrityLevel.Unknown || self is IntegrityLevel.Unknown)
-            return;
-        if ((int)target > (int)self)
+        if (IntegrityBlocked(processes.GetIntegrityLevel(pid), processes.GetCurrentIntegrityLevel()))
         {
             throw new ComputerUseException(
                 ErrorCodes.IntegrityLevelBlocked,
@@ -40,14 +36,13 @@ internal static class AccessGuards
         }
     }
 
-    public static bool IntegrityBlocked(IProcessQuery processes, uint pid)
-    {
-        var target = processes.GetIntegrityLevel(pid);
-        var self = processes.GetCurrentIntegrityLevel();
-        return target is not IntegrityLevel.Unknown
-            && self is not IntegrityLevel.Unknown
-            && (int)target > (int)self;
-    }
+    public static bool IntegrityBlocked(IProcessQuery processes, uint pid) =>
+        IntegrityBlocked(processes.GetIntegrityLevel(pid), processes.GetCurrentIntegrityLevel());
+
+    public static bool IntegrityBlocked(IntegrityLevel target, IntegrityLevel self) =>
+        target is not IntegrityLevel.Unknown
+        && self is not IntegrityLevel.Unknown
+        && (int)target > (int)self;
 
     public static bool ForegroundBelongsToTarget(IWindowQuery windows, nint foreground, nint target, uint pid)
     {

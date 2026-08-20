@@ -51,6 +51,8 @@ internal sealed class WindowListService
         var monitors = _monitors.EnumerateMonitors();
         var warnings = new List<WarningItem>();
         var windows = new List<object>();
+        var processCache = new Dictionary<uint, ProcessInfo>();
+        _host.RefreshHostTree();
 
         foreach (var hwnd in _windows.EnumTopLevelWindows())
         {
@@ -66,7 +68,7 @@ internal sealed class WindowListService
 
             try
             {
-                if (!TryDescribe(hwnd, monitors, warnings, out var dto))
+                if (!TryDescribe(hwnd, monitors, warnings, processCache, out var dto))
                     continue;
                 windows.Add(dto);
             }
@@ -99,7 +101,12 @@ internal sealed class WindowListService
         }
     };
 
-    private bool TryDescribe(nint hwnd, IReadOnlyList<MonitorInfo> monitors, List<WarningItem> warnings, out object dto)
+    private bool TryDescribe(
+        nint hwnd,
+        IReadOnlyList<MonitorInfo> monitors,
+        List<WarningItem> warnings,
+        Dictionary<uint, ProcessInfo> processCache,
+        out object dto)
     {
         dto = null!;
         if (!_windows.IsWindow(hwnd))
@@ -129,11 +136,15 @@ internal sealed class WindowListService
         var pid = _windows.GetPid(hwnd);
         if (pid == 0)
             return false;
-        if (!_processes.TryGetCreateTimeUtc(pid, out var createTime))
-            return false;
+        if (!processCache.TryGetValue(pid, out var info))
+        {
+            if (!_processes.TryGetInfo(pid, out info))
+                return false;
+            processCache[pid] = info;
+        }
 
-        var token = _tokens.Issue(hwnd, pid, createTime, className);
-        var processName = _processes.TryGetProcessName(pid);
+        var token = _tokens.Issue(hwnd, pid, info.CreateTimeUtc, className);
+        var processName = info.ProcessName;
         if (processName is null)
         {
             warnings.Add(new WarningItem
@@ -164,8 +175,8 @@ internal sealed class WindowListService
             effectiveVisible = styleVisible && !minimized && !cloaked,
             onCurrentVirtualDesktop = onCurrent,
             virtualDesktopId = desktopId,
-            isHostWindow = _host.IsHostProcess(pid),
-            integrityBlocked = AccessGuards.IntegrityBlocked(_processes, pid)
+            isHostWindow = _host.IsHostProcess(pid, info.CreateTimeUtc),
+            integrityBlocked = AccessGuards.IntegrityBlocked(info.Integrity, _processes.GetCurrentIntegrityLevel())
         };
         return true;
     }

@@ -183,18 +183,7 @@ internal sealed class Win32ProcessQuery : IProcessQuery
             return null;
         try
         {
-            var sb = new StringBuilder(1024);
-            uint size = (uint)sb.Capacity;
-            if (!NativeMethods.QueryFullProcessImageName(handle, 0, sb, ref size))
-                return null;
-            try
-            {
-                return Path.GetFullPath(sb.ToString());
-            }
-            catch (Exception)
-            {
-                return sb.ToString();
-            }
+            return ReadImagePath(handle);
         }
         finally
         {
@@ -227,11 +216,85 @@ internal sealed class Win32ProcessQuery : IProcessQuery
 
     public IntegrityLevel GetIntegrityLevel(uint pid) => ReadIntegrity(pid);
 
+    public bool TryGetInfo(uint pid, out ProcessInfo info)
+    {
+        info = default;
+        var handle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (handle == 0)
+            return false;
+        try
+        {
+            if (!NativeMethods.GetProcessTimes(handle, out var creation, out _, out _, out _))
+                return false;
+            var path = ReadImagePath(handle);
+            string? name = null;
+            if (path is not null)
+                name = Path.GetFileNameWithoutExtension(path);
+            info = new ProcessInfo(pid, creation, path, name, ReadIntegrityFromHandle(handle));
+            return true;
+        }
+        finally
+        {
+            NativeMethods.CloseHandle(handle);
+        }
+    }
+
+    public IReadOnlyDictionary<uint, uint> CaptureParentMap()
+    {
+        var map = new Dictionary<uint, uint>();
+        var snap = NativeMethods.CreateToolhelp32Snapshot(NativeMethods.TH32CS_SNAPPROCESS, 0);
+        if (snap == nint.Zero || snap == (nint)(-1))
+            return map;
+        try
+        {
+            var pe = new NativeMethods.PROCESSENTRY32 { dwSize = (uint)Marshal.SizeOf<NativeMethods.PROCESSENTRY32>() };
+            if (!NativeMethods.Process32First(snap, ref pe))
+                return map;
+            do
+            {
+                map[pe.th32ProcessID] = pe.th32ParentProcessID;
+            } while (NativeMethods.Process32Next(snap, ref pe));
+            return map;
+        }
+        finally
+        {
+            NativeMethods.CloseHandle(snap);
+        }
+    }
+
     private static IntegrityLevel ReadIntegrity(uint pid)
     {
         var process = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
         if (process == 0)
             return IntegrityLevel.Unknown;
+        try
+        {
+            return ReadIntegrityFromHandle(process);
+        }
+        finally
+        {
+            NativeMethods.CloseHandle(process);
+        }
+    }
+
+    private static string? ReadImagePath(nint handle)
+    {
+        var sb = new StringBuilder(1024);
+        uint size = (uint)sb.Capacity;
+        if (!NativeMethods.QueryFullProcessImageName(handle, 0, sb, ref size))
+            return null;
+        try
+        {
+            return Path.GetFullPath(sb.ToString());
+        }
+        catch (Exception)
+        {
+            return sb.ToString();
+        }
+    }
+
+    private static IntegrityLevel ReadIntegrityFromHandle(nint process)
+    {
         nint token = 0;
         nint buffer = 0;
         try
@@ -271,7 +334,6 @@ internal sealed class Win32ProcessQuery : IProcessQuery
                 Marshal.FreeHGlobal(buffer);
             if (token != 0)
                 NativeMethods.CloseHandle(token);
-            NativeMethods.CloseHandle(process);
         }
     }
 }

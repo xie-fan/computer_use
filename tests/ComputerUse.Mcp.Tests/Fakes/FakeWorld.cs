@@ -37,6 +37,9 @@ internal sealed class FakeWorld : IWindowQuery, IProcessQuery
     public Dictionary<uint, FakeProcess> Processes { get; } = new();
     public IntegrityLevel CurrentIntegrity { get; set; } = IntegrityLevel.Medium;
 
+    public int InfoCallCount { get; private set; }
+    public int ParentMapCallCount { get; private set; }
+
     public bool IsWindow(nint hwnd) => Windows.ContainsKey(hwnd);
     public uint GetPid(nint hwnd) => Windows[hwnd].Pid;
     public string GetClassName(nint hwnd) => Windows[hwnd].ClassName;
@@ -76,4 +79,65 @@ internal sealed class FakeWorld : IWindowQuery, IProcessQuery
     public uint? TryGetParentPid(uint pid) => Processes.TryGetValue(pid, out var p) ? p.ParentPid : null;
     public IntegrityLevel GetIntegrityLevel(uint pid) => Processes.TryGetValue(pid, out var p) ? p.Integrity : IntegrityLevel.Unknown;
     public IntegrityLevel GetCurrentIntegrityLevel() => CurrentIntegrity;
+
+    public bool TryGetInfo(uint pid, out ProcessInfo info)
+    {
+        InfoCallCount++;
+        if (!Processes.TryGetValue(pid, out var p))
+        {
+            info = default;
+            return false;
+        }
+
+        info = new ProcessInfo(pid, p.CreateTimeUtc, p.ImagePath, p.Name, p.Integrity);
+        return true;
+    }
+
+    public IReadOnlyDictionary<uint, uint> CaptureParentMap()
+    {
+        ParentMapCallCount++;
+        return Processes.ToDictionary(kv => kv.Key, kv => kv.Value.ParentPid ?? 0u);
+    }
+}
+
+internal sealed class FakeMonitors : IMonitorQuery
+{
+    public IReadOnlyList<MonitorInfo> Items { get; } =
+    [
+        new MonitorInfo
+        {
+            DeviceName = @"\\.\DISPLAY1",
+            Primary = true,
+            Bounds = new ScreenRect(0, 0, 1920, 1080),
+            WorkArea = new ScreenRect(0, 0, 1920, 1040),
+            Dpi = Dpi.Default,
+            Index = 0,
+            Handle = 1
+        }
+    ];
+
+    public IReadOnlyList<MonitorInfo> EnumerateMonitors() => Items;
+    public MonitorInfo? FromWindow(nint hwnd, IReadOnlyList<MonitorInfo> snapshot) => snapshot.Count > 0 ? snapshot[0] : null;
+    public bool IsInAnyWorkArea(ScreenPoint point, IReadOnlyList<MonitorInfo> snapshot) => true;
+}
+
+internal sealed class FakeDesktops : IVirtualDesktopMembership
+{
+    public bool MembershipQueryAvailable => true;
+
+    public bool? IsOnCurrentVirtualDesktop(nint hwnd, out Guid? desktopId)
+    {
+        desktopId = Guid.Empty;
+        return true;
+    }
+}
+
+internal sealed class StubHost : IHostProcessResolver
+{
+    public bool Result { get; set; }
+    public int RefreshCount { get; private set; }
+
+    public bool IsHostProcess(uint pid) => Result;
+    public bool IsHostProcess(uint pid, long createTimeUtc) => Result;
+    public void RefreshHostTree() => RefreshCount++;
 }
