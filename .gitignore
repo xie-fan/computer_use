@@ -1,0 +1,37 @@
+# Build
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+*.userprefs
+
+# Test / coverage
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+coverage.xml
+coverage.json
+
+# Canonical publish output and other publish trees
+artifacts/
+publish/
+
+# Optional prebuilt runtime drop (keep the placeholder)
+/runtime/windows-amd64/*
+!/runtime/windows-amd64/.gitkeep
+
+# User MCP runtime (normally %USERPROFILE%\computer-use-mcp)
+/computer-use-mcp/
+
+# Logs / packages
+*.log
+*.nupkg
+*.snupkg
+project.lock.json
+project.fragment.lock.json

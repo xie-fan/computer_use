@@ -1,0 +1,2 @@
+# Placeholder for a prebuilt ComputerUse.Mcp.exe (self-contained win-x64).
+# scripts/install.ps1 copies this folder to %USERPROFILE%\computer-use-mcp when the exe is present.

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "computer_use": {
+      "command": "cmd.exe",
+      "args": [
+        "/d",
+        "/c",
+        "%USERPROFILE%\\computer-use-mcp\\launch-mcp.cmd"
+      ]
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "computer-use",
+  "version": "0.1.0",
+  "description": "Local Windows computer-use for Cursor: list top-level windows, capture a Frame, and operate that Window on the CurrentVirtualDesktop.",
+  "author": {
+    "name": "local"
+  },
+  "license": "MIT",
+  "keywords": ["computer-use", "windows", "mcp", "screenshot"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.cursor.json"
+}
