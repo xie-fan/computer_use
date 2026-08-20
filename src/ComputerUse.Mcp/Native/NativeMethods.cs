@@ -237,6 +237,14 @@ internal static partial class NativeMethods
     [DllImport("user32.dll")]
     public static extern nint DispatchMessage(ref MSG lpMsg);
 
+    [DllImport("user32.dll")]
+    public static extern uint MsgWaitForMultipleObjectsEx(
+        uint nCount,
+        nint[]? pHandles,
+        uint dwMilliseconds,
+        uint dwWakeMask,
+        uint dwFlags);
+
     [DllImport("kernel32.dll")]
     public static extern uint GetCurrentThreadId();
 
@@ -497,4 +505,9 @@ internal static partial class NativeMethods
     public const uint TH32CS_SNAPPROCESS = 0x00000002;
     public const uint CLSCTX_INPROC_SERVER = 1;
     public const uint PM_REMOVE = 0x0001;
+    public const uint QS_ALLINPUT = 0x04FF;
+    public const uint MWMO_INPUTAVAILABLE = 0x0004;
+    public const uint WAIT_OBJECT_0 = 0;
+    public const uint WAIT_TIMEOUT = 258;
+    public const uint WAIT_FAILED = 0xFFFFFFFF;
 }

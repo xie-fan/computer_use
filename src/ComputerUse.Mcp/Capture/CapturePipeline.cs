@@ -4,7 +4,7 @@ using ComputerUse.Mcp.Native;
 
 namespace ComputerUse.Mcp.Capture;
 
-internal sealed class CapturePipeline : ICapturePipeline
+internal sealed class CapturePipeline : ICapturePipeline, IDisposable
 {
     private readonly NativeStaDispatcher _sta;
     private readonly WgcCaptureAdapter _wgc = new();
@@ -39,6 +39,18 @@ internal sealed class CapturePipeline : ICapturePipeline
         catch (ComputerUseException)
         {
             throw wgcError ?? new ComputerUseException(ErrorCodes.CaptureFailed, "Capture failed.");
+        }
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            _sta.InvokeAsync(() => _wgc.Dispose(), CancellationToken.None).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            // Host shutdown may have already torn down the STA dispatcher.
         }
     }
 }
