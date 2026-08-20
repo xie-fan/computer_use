@@ -23,7 +23,6 @@ internal sealed class OperateService
     private readonly IInputInjector _input;
     private readonly IClipboardWorker _clipboard;
     private readonly IHostProcessResolver _host;
-    private readonly WindowListService _list;
     private readonly Limits _limits;
     private readonly ILogger<OperateService> _logger;
 
@@ -42,7 +41,6 @@ internal sealed class OperateService
         IInputInjector input,
         IClipboardWorker clipboard,
         IHostProcessResolver host,
-        WindowListService list,
         Limits limits,
         ILogger<OperateService> logger)
     {
@@ -60,7 +58,6 @@ internal sealed class OperateService
         _input = input;
         _clipboard = clipboard;
         _host = host;
-        _list = list;
         _limits = limits;
         _logger = logger;
     }
@@ -372,9 +369,7 @@ internal sealed class OperateService
             MayHaveExecuted = mayHaveExecuted,
             Code = code,
             Warnings = warnings,
-            SideEffects = side,
-            Capabilities = _list.Capabilities(),
-            Limits = _limits.ToPublicDto()
+            SideEffects = side
         };
 
     private object BuildDetails(int completed, int? failedIndex, bool outcomeKnown, bool mayHaveExecuted, SideEffects side, IReadOnlyList<WarningItem> warnings, string code) =>

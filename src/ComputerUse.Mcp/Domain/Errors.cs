@@ -81,6 +81,24 @@ internal sealed class OperateOutcome
     public SideEffects SideEffects { get; init; } = new();
     public string ContractVersion { get; init; } = Contract.Version;
     public string ServerVersion { get; init; } = Contract.ServerVersion;
-    public object? Capabilities { get; init; }
-    public object? Limits { get; init; }
+}
+
+internal sealed class ScreenshotResult
+{
+    public required string FrameId { get; init; }
+    public required string TargetToken { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public int SourceWidth { get; init; }
+    public int SourceHeight { get; init; }
+    public double Scale { get; init; }
+    public required string CaptureMethod { get; init; }
+    public required object Transform { get; init; }
+    public required object Dpi { get; init; }
+    public required object Bounds { get; init; }
+    public required object Monitor { get; init; }
+    public DateTimeOffset CapturedAt { get; init; }
+    public required SideEffects SideEffects { get; init; }
+    public string ContractVersion { get; init; } = Contract.Version;
+    public string ServerVersion { get; init; } = Contract.ServerVersion;
 }

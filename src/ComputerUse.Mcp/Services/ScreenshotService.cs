@@ -19,7 +19,6 @@ internal sealed class ScreenshotService
     private readonly ISessionGuard _session;
     private readonly IWindowActivator _activator;
     private readonly ICapturePipeline _capture;
-    private readonly WindowListService _list;
     private readonly Limits _limits;
     private readonly ILogger<ScreenshotService> _logger;
 
@@ -34,7 +33,6 @@ internal sealed class ScreenshotService
         ISessionGuard session,
         IWindowActivator activator,
         ICapturePipeline capture,
-        WindowListService list,
         Limits limits,
         ILogger<ScreenshotService> logger)
     {
@@ -48,7 +46,6 @@ internal sealed class ScreenshotService
         _session = session;
         _activator = activator;
         _capture = capture;
-        _list = list;
         _limits = limits;
         _logger = logger;
     }
@@ -108,26 +105,22 @@ internal sealed class ScreenshotService
             };
             _frames.Add(frame);
 
-            var json = new
+            var json = new ScreenshotResult
             {
-                frameId,
-                targetToken,
-                width = fitted.Width,
-                height = fitted.Height,
-                sourceWidth = captured.Width,
-                sourceHeight = captured.Height,
-                scale = fitted.Scale,
-                captureMethod = captured.Method,
-                transform = frame.ToTransformDto(),
-                dpi = new { x = live.Dpi.X, y = live.Dpi.Y },
-                bounds = live.WindowRect.ToDto(),
-                monitor = new { deviceName = monitor?.DeviceName },
-                capturedAt,
-                sideEffects = side,
-                contractVersion = Contract.Version,
-                serverVersion = Contract.ServerVersion,
-                capabilities = _list.Capabilities(),
-                limits = _limits.ToPublicDto()
+                FrameId = frameId,
+                TargetToken = targetToken,
+                Width = fitted.Width,
+                Height = fitted.Height,
+                SourceWidth = captured.Width,
+                SourceHeight = captured.Height,
+                Scale = fitted.Scale,
+                CaptureMethod = captured.Method,
+                Transform = frame.ToTransformDto(),
+                Dpi = new { x = live.Dpi.X, y = live.Dpi.Y },
+                Bounds = live.WindowRect.ToDto(),
+                Monitor = new { deviceName = monitor?.DeviceName },
+                CapturedAt = capturedAt,
+                SideEffects = side
             };
 
             _logger.LogInformation("tool={Tool} code={Code} elapsedMs={Elapsed}", "screenshot_window", "ok", (int)(DateTimeOffset.UtcNow - started).TotalMilliseconds);

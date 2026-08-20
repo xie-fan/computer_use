@@ -17,7 +17,12 @@ internal static class ToolResults
 
     public static CallToolResult Ok(object payload, byte[]? png = null)
     {
-        var structured = JsonSerializer.SerializeToElement(payload, Json);
+        var structured = payload switch
+        {
+            OperateOutcome operate => JsonSerializer.SerializeToElement(operate, ComputerUseJsonContext.Default.OperateOutcome),
+            ScreenshotResult shot => JsonSerializer.SerializeToElement(shot, ComputerUseJsonContext.Default.ScreenshotResult),
+            _ => JsonSerializer.SerializeToElement(payload, Json)
+        };
         var text = structured.GetRawText();
         var content = new List<ContentBlock>();
         if (png is not null)
@@ -39,7 +44,7 @@ internal static class ToolResults
             Message = ex.Message,
             Details = ex.Details
         };
-        var structured = JsonSerializer.SerializeToElement(envelope, Json);
+        var structured = JsonSerializer.SerializeToElement(envelope, ComputerUseJsonContext.Default.ErrorEnvelope);
         var text = structured.GetRawText();
         return new CallToolResult
         {
