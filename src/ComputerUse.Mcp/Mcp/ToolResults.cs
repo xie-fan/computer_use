@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using ComputerUse.Mcp.Domain;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
@@ -8,21 +7,29 @@ namespace ComputerUse.Mcp.Mcp;
 
 internal static class ToolResults
 {
-    public static readonly JsonSerializerOptions Json = new()
+    public static JsonSerializerOptions Json => EnvelopeJson.Options;
+
+    public static JsonElement SerializeStructured(object payload) => payload switch
     {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-        PropertyNameCaseInsensitive = true
+        OperateOutcome operate => JsonSerializer.SerializeToElement(operate, ComputerUseJsonContext.Default.OperateOutcome),
+        ScreenshotResult shot => JsonSerializer.SerializeToElement(shot, ComputerUseJsonContext.Default.ScreenshotResult),
+        _ => JsonSerializer.SerializeToElement(payload, Json)
     };
+
+    public static JsonElement SerializeError(ComputerUseException ex)
+    {
+        var envelope = new ErrorEnvelope
+        {
+            Code = ex.Code,
+            Message = ex.Message,
+            Details = EnvelopeJson.Details(ex.Details)
+        };
+        return JsonSerializer.SerializeToElement(envelope, ComputerUseJsonContext.Default.ErrorEnvelope);
+    }
 
     public static CallToolResult Ok(object payload, byte[]? png = null)
     {
-        var structured = payload switch
-        {
-            OperateOutcome operate => JsonSerializer.SerializeToElement(operate, ComputerUseJsonContext.Default.OperateOutcome),
-            ScreenshotResult shot => JsonSerializer.SerializeToElement(shot, ComputerUseJsonContext.Default.ScreenshotResult),
-            _ => JsonSerializer.SerializeToElement(payload, Json)
-        };
+        var structured = SerializeStructured(payload);
         var text = structured.GetRawText();
         var content = new List<ContentBlock>();
         if (png is not null)
@@ -38,13 +45,7 @@ internal static class ToolResults
 
     public static CallToolResult Error(ComputerUseException ex)
     {
-        var envelope = new ErrorEnvelope
-        {
-            Code = ex.Code,
-            Message = ex.Message,
-            Details = ex.Details
-        };
-        var structured = JsonSerializer.SerializeToElement(envelope, ComputerUseJsonContext.Default.ErrorEnvelope);
+        var structured = SerializeError(ex);
         var text = structured.GetRawText();
         return new CallToolResult
         {

@@ -159,7 +159,7 @@ internal sealed class WindowListService
             {
                 Code = "process_name_unavailable",
                 Message = "Process name could not be resolved.",
-                Details = new { pid, targetToken = token }
+                Details = EnvelopeJson.Details(new { pid, targetToken = token })
             });
         }
 

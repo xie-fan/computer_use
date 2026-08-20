@@ -116,9 +116,9 @@ internal sealed class ScreenshotService
                 Scale = fitted.Scale,
                 CaptureMethod = captured.Method,
                 Transform = frame.ToTransformDto(),
-                Dpi = new { x = live.Dpi.X, y = live.Dpi.Y },
+                Dpi = new DpiDto { X = live.Dpi.X, Y = live.Dpi.Y },
                 Bounds = live.WindowRect.ToDto(),
-                Monitor = new { deviceName = monitor?.DeviceName },
+                Monitor = new MonitorRefDto { DeviceName = monitor?.DeviceName },
                 CapturedAt = capturedAt,
                 SideEffects = side
             };

@@ -1,12 +1,53 @@
 namespace ComputerUse.Mcp.Domain;
 
+internal sealed class RectDto
+{
+    public int Left { get; init; }
+    public int Top { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
+}
+
+internal sealed class PointDto
+{
+    public int X { get; init; }
+    public int Y { get; init; }
+}
+
+internal sealed class SizeDto
+{
+    public int Width { get; init; }
+    public int Height { get; init; }
+}
+
+internal sealed class DpiDto
+{
+    public uint X { get; init; }
+    public uint Y { get; init; }
+}
+
+internal sealed class MonitorRefDto
+{
+    public string? DeviceName { get; init; }
+}
+
+internal sealed class TransformDto
+{
+    public required string Rounding { get; init; }
+    public double Scale { get; init; }
+    public required PointDto CaptureOriginScreen { get; init; }
+    public required SizeDto CaptureSize { get; init; }
+    public required RectDto WindowRect { get; init; }
+    public required RectDto ExtendedFrameBounds { get; init; }
+}
+
 internal readonly record struct ScreenRect(int Left, int Top, int Width, int Height)
 {
     public int Right => checked(Left + Width);
     public int Bottom => checked(Top + Height);
     public bool IsEmpty => Width <= 0 || Height <= 0;
 
-    public object ToDto() => new { left = Left, top = Top, width = Width, height = Height };
+    public RectDto ToDto() => new() { Left = Left, Top = Top, Width = Width, Height = Height };
 
     public bool ApproximatelyEquals(ScreenRect other, int epsilon) =>
         Math.Abs(Left - other.Left) <= epsilon
@@ -105,14 +146,14 @@ internal sealed class FrameRecord
     public required DateTimeOffset CapturedAt { get; init; }
     public required string Rounding { get; init; }
 
-    public object ToTransformDto() => new
+    public TransformDto ToTransformDto() => new()
     {
-        rounding = Rounding,
-        scale = Scale,
-        captureOriginScreen = new { x = CaptureOriginScreen.X, y = CaptureOriginScreen.Y },
-        captureSize = new { width = SourceWidth, height = SourceHeight },
-        windowRect = WindowRect.ToDto(),
-        extendedFrameBounds = ExtendedFrameBounds.ToDto()
+        Rounding = Rounding,
+        Scale = Scale,
+        CaptureOriginScreen = new PointDto { X = CaptureOriginScreen.X, Y = CaptureOriginScreen.Y },
+        CaptureSize = new SizeDto { Width = SourceWidth, Height = SourceHeight },
+        WindowRect = WindowRect.ToDto(),
+        ExtendedFrameBounds = ExtendedFrameBounds.ToDto()
     };
 
     public bool GeometryChanged(WindowGeometry live, int epsilon) =>

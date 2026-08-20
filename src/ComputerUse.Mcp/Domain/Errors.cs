@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace ComputerUse.Mcp.Domain;
 
 internal static class ErrorCodes
@@ -52,14 +54,14 @@ internal sealed class ErrorEnvelope
 {
     public required string Code { get; init; }
     public required string Message { get; init; }
-    public object? Details { get; init; }
+    public JsonElement? Details { get; init; }
 }
 
 internal sealed class WarningItem
 {
     public required string Code { get; init; }
     public required string Message { get; init; }
-    public object? Details { get; init; }
+    public JsonElement? Details { get; init; }
 }
 
 internal sealed class SideEffects
@@ -93,10 +95,10 @@ internal sealed class ScreenshotResult
     public int SourceHeight { get; init; }
     public double Scale { get; init; }
     public required string CaptureMethod { get; init; }
-    public required object Transform { get; init; }
-    public required object Dpi { get; init; }
-    public required object Bounds { get; init; }
-    public required object Monitor { get; init; }
+    public required TransformDto Transform { get; init; }
+    public required DpiDto Dpi { get; init; }
+    public required RectDto Bounds { get; init; }
+    public required MonitorRefDto Monitor { get; init; }
     public DateTimeOffset CapturedAt { get; init; }
     public required SideEffects SideEffects { get; init; }
     public string ContractVersion { get; init; } = Contract.Version;
