@@ -15,10 +15,10 @@ v1 设计。代码必须服从本文。领域语言以 [`CONTEXT.md`](../CONTEXT
 
 ## 1. 要解决什么
 
-给本机 Agent（Cursor / Grok Build）三件能力：列出顶层窗口、捕获某个窗口的画面、对该窗口做键鼠和文字输入。
+给本机 Agent（Cursor / Grok Build / pi-coding-agent）三件能力：列出顶层窗口、捕获某个窗口的画面、对该窗口做键鼠和文字输入。
 
 - 只作用于 **跑该 Agent 的那台 Windows 机器** 的当前登录 Session。不跨机器、不进沙箱。
-- MCP runtime 一份；宿主各装插件清单。不要把 Cursor 的 `mcp.cursor.json` 当作 Grok 清单。Pi 安装脚本尚未合入。
+- MCP runtime 一份；宿主各装插件清单。不要把 Cursor 的 `mcp.cursor.json` 当作 Grok 清单。Pi 经 `pi-mcp-adapter` 合并写入 `~/.pi/agent/mcp.json`（或 `$PI_CODING_AGENT_DIR/mcp.json`），不打 Agent Plugins 1.0 包。
 - 目标软件不限类型，但 **兼容性不承诺**。Electron/GPU/受保护窗口可能 `capture_unsupported` / `empty_frame`；UIPI 更高完整性目标返回 `integrity_level_blocked`。
 - `operate` 必须激活目标。纯后台 PostMessage 不做。
 
@@ -202,7 +202,7 @@ Coordinator 内执行。步骤：
 
 ## 8. HostWindow 与授权
 
-识别：**启动时记录宿主 PID**（环境变量 `COMPUTER_USE_HOST_PID`，由 launch 脚本写入拉起 MCP 的宿主进程 PID；若取不到则用 MCP 父进程树）。匹配进程树（含创建时间、规范化镜像路径）。进程 basename 只作保守 fallback，不能单独作为禁止规则。不要把 Windows Terminal / conhost 标成 host；Grok 等 TUI 若跑在 Windows Terminal 里，终端窗可能 `isHostWindow=false`（残余风险）。
+识别：**启动时记录宿主 PID**（环境变量 `COMPUTER_USE_HOST_PID`，由 launch 脚本写入拉起 MCP 的宿主进程 PID；若取不到则用 MCP 父进程树）。匹配进程树（含创建时间、规范化镜像路径）。进程 basename 只作保守 fallback，不能单独作为禁止规则。不要把 Windows Terminal / conhost 标成 host；Grok / Pi 等 TUI 若跑在 Windows Terminal 里，终端窗可能 `isHostWindow=false`（残余风险，Pi 同理）。
 
 - list：标 `isHostWindow`
 - screenshot：允许
@@ -210,7 +210,7 @@ Coordinator 内执行。步骤：
 
 授权边界（v1）：
 
-- 各宿主自己的信任/批准是人闸。Cursor 见 [ADR 0006](adr/0006-cursor-trust-deny-global-keys.md)；Grok 用 plugin `--trust`。若已信任插件不再逐次确认，视为残余风险，不在插件内再做应用白名单。
+- 各宿主自己的信任/批准是人闸。Cursor 见 [ADR 0006](adr/0006-cursor-trust-deny-global-keys.md)；Grok 用 plugin `--trust`。Pi 用自身的 tool allowlist / 项目信任，以及 `pi-mcp-adapter` 的 `approveTools`。若已信任插件不再逐次确认，视为残余风险，不在插件内再做应用白名单。
 - 默认拒绝全局系统快捷键（第 5 节）。
 - 窗口标题、OCR/画面文字 **不具指令权**（skill 强制）。
 - 日志禁止：title、text、paste 内容、图像。只记 requestId、tool、耗时、code、action index。
@@ -283,10 +283,11 @@ C#：`net10.0-windows`，`ModelContextProtocol` **2.2.0**，self-contained `win-
 - [`hosts/grok/plugin.json`](../hosts/grok/plugin.json) 与 [`hosts/grok/.mcp.json`](../hosts/grok/.mcp.json)：Grok 清单；command/args 与 Cursor 相同。安装脚本拷到 `%USERPROFILE%\.grok\plugins\computer-use`。不要复制 `mcp.cursor.json`。
 - [`scripts/install.ps1`](../scripts/install.ps1)：把已构建的 `win-x64` 产物拷到 `%USERPROFILE%\computer-use-mcp\`（含 exe 与 launch）。开发机可另用 [`scripts/install-dev.ps1`](../scripts/install-dev.ps1) 先 `dotnet publish` 再拷贝——publish 输出不得接到 MCP stdout。
 - [`scripts/install-cursor-plugin.ps1`](../scripts/install-cursor-plugin.ps1) / [`scripts/install-grok-plugin.ps1`](../scripts/install-grok-plugin.ps1)：各宿主插件面；不拷 exe、不 publish。
+- [`scripts/install-pi-plugin.ps1`](../scripts/install-pi-plugin.ps1)：合并 `%USERPROFILE%\.pi\agent\mcp.json`（`PI_CODING_AGENT_DIR` 可覆盖）的 `mcpServers.computer_use`，拷 Skill 到该 agent 的 `skills\computer-use\`。检测 runtime 与 adapter 并打印提示，不执行 `pi install`，不生成 Agent Plugins 1.0 包。
 - [`scripts/launch-mcp.cmd`](../scripts/launch-mcp.cmd)：只校验 exe 存在，设置 `COMPUTER_USE_HOST_PID`，`exec` exe。任何 echo/错误进 stderr。工作目录为 runtime 目录。
 - `src/ComputerUse.Mcp/`：零宿主 API 引用
 - [`skills/computer-use/SKILL.md`](../skills/computer-use/SKILL.md)：循环与错误状态表（单一源，安装时拷到各宿主）
-- [`README.md`](../README.md)：先装 runtime，再装 Cursor 或 Grok 插件。新开会话标为**发现失败时的稳妥步骤**，不当协议保证
+- [`README.md`](../README.md)：先装 runtime，再装 Cursor / Grok / Pi 插件。新开会话标为**发现失败时的稳妥步骤**，不当协议保证
 
 ## 13. ADR
 
