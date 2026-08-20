@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using ComputerUse.Mcp.Abstractions;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Native;
 
@@ -13,21 +12,19 @@ internal static class PrintWindowHelper
     public static int Run(string[] args)
     {
         NativeMethods.SetProcessDpiAwarenessContext(NativeMethods.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        if (args.Length < 3 || !ulong.TryParse(args[1], out var hwndValue))
+        if (args.Length < 2 || !ulong.TryParse(args[1], out var hwndValue))
         {
             Console.Error.WriteLine("print-window-helper: invalid arguments");
             return 1;
         }
 
         var hwnd = (nint)hwndValue;
-        var path = args[2];
         CapturedBitmap? bmp = null;
         try
         {
             bmp = Capture(hwnd);
-            var png = PngCodec.EncodeBgra(bmp.Bgra, bmp.Width, bmp.Height, bmp.Stride);
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllBytes(path, png);
+            using var stdout = Console.OpenStandardOutput();
+            PrintWindowBgraCodec.Write(stdout, bmp);
             return 0;
         }
         catch (ComputerUseException ex)
@@ -96,7 +93,7 @@ internal static class PrintWindowHelper
             try
             {
                 Marshal.Copy(bits, captured.Bgra, 0, captured.ByteLength);
-                if (IsCompletelyEmpty(captured.Bgra, captured.ByteLength))
+                if (BgraEmptyFrame.IsEmpty(captured.Bgra, width, height, stride))
                     throw new ComputerUseException(ErrorCodes.EmptyFrame, "PrintWindow returned an empty frame.");
                 var result = captured;
                 captured = null;
@@ -118,26 +115,13 @@ internal static class PrintWindowHelper
             NativeMethods.ReleaseDC(hwnd, screenDc);
         }
     }
-
-    private static bool IsCompletelyEmpty(byte[] bgra, int length)
-    {
-        for (var i = 0; i < length; i++)
-        {
-            if (bgra[i] != 0)
-                return false;
-        }
-        return true;
-    }
 }
 
 internal sealed class PrintWindowProcessCapture
 {
     public CapturedBitmap Capture(nint hwnd, int timeoutMs)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "computer-use-mcp");
-        Directory.CreateDirectory(dir);
-        var path = Path.Combine(dir, $"pw-{Guid.NewGuid():N}.png");
-        var (file, args) = HelperStartInfo(hwnd, path);
+        var (file, args) = HelperStartInfo(hwnd);
         using var process = new Process
         {
             StartInfo = new ProcessStartInfo(file)
@@ -145,60 +129,57 @@ internal sealed class PrintWindowProcessCapture
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                RedirectStandardInput = true
+                RedirectStandardError = true
             }
         };
         foreach (var a in args)
             process.StartInfo.ArgumentList.Add(a);
 
+        if (!process.Start())
+            throw new ComputerUseException(ErrorCodes.CaptureFailed, "Failed to start the PrintWindow helper.");
+
+        var stdout = process.StandardOutput.BaseStream;
+        var readTask = Task.Run(() => PrintWindowBgraCodec.Read(stdout));
+
+        if (!process.WaitForExit(timeoutMs))
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            Observe(readTask);
+            throw new ComputerUseException(ErrorCodes.CaptureTimeout, "PrintWindow helper timed out.");
+        }
+
+        if (process.ExitCode != 0)
+        {
+            Observe(readTask);
+            throw process.ExitCode switch
+            {
+                2 => new ComputerUseException(ErrorCodes.EmptyFrame, "PrintWindow returned an empty frame."),
+                3 => new ComputerUseException(ErrorCodes.CaptureUnsupported, "PrintWindow is not supported for this window."),
+                _ => new ComputerUseException(ErrorCodes.CaptureFailed, "PrintWindow helper failed.")
+            };
+        }
+
         try
         {
-            if (!process.Start())
-                throw new ComputerUseException(ErrorCodes.CaptureFailed, "Failed to start the PrintWindow helper.");
-            if (!process.WaitForExit(timeoutMs))
-            {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                throw new ComputerUseException(ErrorCodes.CaptureTimeout, "PrintWindow helper timed out.");
-            }
-
-            if (process.ExitCode != 0 || !File.Exists(path))
-            {
-                throw process.ExitCode switch
-                {
-                    2 => new ComputerUseException(ErrorCodes.EmptyFrame, "PrintWindow returned an empty frame."),
-                    3 => new ComputerUseException(ErrorCodes.CaptureUnsupported, "PrintWindow is not supported for this window."),
-                    _ => new ComputerUseException(ErrorCodes.CaptureFailed, "PrintWindow helper failed.")
-                };
-            }
-
-            using var bmp = new System.Drawing.Bitmap(path);
-            var width = bmp.Width;
-            var height = bmp.Height;
-            var data = bmp.LockBits(new System.Drawing.Rectangle(0, 0, width, height), System.Drawing.Imaging.ImageLockMode.ReadOnly, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-            CapturedBitmap? captured = null;
-            try
-            {
-                var stride = Math.Abs(data.Stride);
-                captured = CapturedBitmap.Rent(width, height, stride, "print_window");
-                Marshal.Copy(data.Scan0, captured.Bgra, 0, captured.ByteLength);
-                var result = captured;
-                captured = null;
-                return result;
-            }
-            finally
-            {
-                captured?.Return();
-                bmp.UnlockBits(data);
-            }
+            return readTask.GetAwaiter().GetResult();
         }
-        finally
+        catch (ComputerUseException)
         {
-            try { File.Delete(path); } catch { }
+            throw;
+        }
+        catch (Exception)
+        {
+            throw new ComputerUseException(ErrorCodes.CaptureFailed, "PrintWindow helper failed.");
         }
     }
 
-    private static (string File, string[] Args) HelperStartInfo(nint hwnd, string path)
+    private static void Observe(Task task)
+    {
+        try { task.Wait(TimeSpan.FromMilliseconds(100)); }
+        catch { /* drain so a failed Read is not unobserved */ }
+    }
+
+    private static (string File, string[] Args) HelperStartInfo(nint hwnd)
     {
         var hwndText = unchecked((ulong)hwnd).ToString();
         var entry = Environment.ProcessPath;
@@ -207,13 +188,13 @@ internal sealed class PrintWindowProcessCapture
             && Path.GetFileNameWithoutExtension(entry).Equals("dotnet", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrEmpty(dll))
         {
-            return (entry, ["exec", dll, PrintWindowHelper.Argument, hwndText, path]);
+            return (entry, ["exec", dll, PrintWindowHelper.Argument, hwndText]);
         }
 
         if (!string.IsNullOrEmpty(entry))
-            return (entry, [PrintWindowHelper.Argument, hwndText, path]);
+            return (entry, [PrintWindowHelper.Argument, hwndText]);
         if (!string.IsNullOrEmpty(dll))
-            return ("dotnet", ["exec", dll, PrintWindowHelper.Argument, hwndText, path]);
+            return ("dotnet", ["exec", dll, PrintWindowHelper.Argument, hwndText]);
         throw new ComputerUseException(ErrorCodes.CaptureFailed, "Cannot locate this executable for PrintWindow isolation.");
     }
 }
