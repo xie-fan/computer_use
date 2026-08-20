@@ -346,14 +346,8 @@ internal sealed class OperateService
 
     private void Revalidate(TargetTokenPayload token)
     {
-        if (!_windows.IsWindow(token.Hwnd)
-            || _windows.GetPid(token.Hwnd) != token.Pid
-            || !string.Equals(_windows.GetClassName(token.Hwnd), token.ClassName, StringComparison.Ordinal)
-            || !_processes.TryGetCreateTimeUtc(token.Pid, out var createTime)
-            || createTime != token.CreateTimeUtc)
-        {
+        if (!TargetTokenService.MatchesLive(token, _windows, _processes))
             throw new ComputerUseException(ErrorCodes.StaleTarget, "The target token no longer matches a live window identity.");
-        }
     }
 
     private void EnsureFocus(TargetTokenPayload token)

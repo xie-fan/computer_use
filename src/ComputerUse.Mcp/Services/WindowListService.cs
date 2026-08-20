@@ -53,29 +53,37 @@ internal sealed class WindowListService
         var windows = new List<object>();
         var processCache = new Dictionary<uint, ProcessInfo>();
         _host.RefreshHostTree();
+        _tokens.BeginIssuedSnapshot();
 
-        foreach (var hwnd in _windows.EnumTopLevelWindows())
+        try
         {
-            if (windows.Count >= _limits.MaxListWindows)
+            foreach (var hwnd in _windows.EnumTopLevelWindows())
             {
-                warnings.Add(new WarningItem
+                if (windows.Count >= _limits.MaxListWindows)
                 {
-                    Code = "list_truncated",
-                    Message = $"Listing stopped at maxListWindows ({_limits.MaxListWindows})."
-                });
-                break;
-            }
+                    warnings.Add(new WarningItem
+                    {
+                        Code = "list_truncated",
+                        Message = $"Listing stopped at maxListWindows ({_limits.MaxListWindows})."
+                    });
+                    break;
+                }
 
-            try
-            {
-                if (!TryDescribe(hwnd, monitors, warnings, processCache, out var dto))
-                    continue;
-                windows.Add(dto);
+                try
+                {
+                    if (!TryDescribe(hwnd, monitors, warnings, processCache, out var dto))
+                        continue;
+                    windows.Add(dto);
+                }
+                catch
+                {
+                    // Enumerated window was destroyed; skip.
+                }
             }
-            catch
-            {
-                // Enumerated window was destroyed; skip.
-            }
+        }
+        finally
+        {
+            _tokens.EndIssuedSnapshot();
         }
 
         return new

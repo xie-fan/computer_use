@@ -99,6 +99,26 @@ public sealed class WindowListServiceTests
     }
 
     [Fact]
+    public void ConsecutiveList_SameWindow_ReusesToken()
+    {
+        var world = new FakeWorld();
+        world.Processes[10] = new FakeProcess { Pid = 10, CreateTimeUtc = 1000, Name = "app" };
+        world.Windows[1] = new FakeWindow { Hwnd = 1, Pid = 10, Title = "A" };
+        var list = new WindowListService(
+            world,
+            new FakeMonitors(),
+            world,
+            new FakeDesktops(),
+            new StubHost(),
+            new TargetTokenService(),
+            Limits.V1);
+
+        var first = JsonSerializer.SerializeToElement(list.List()).GetProperty("windows")[0].GetProperty("targetToken").GetString();
+        var second = JsonSerializer.SerializeToElement(list.List()).GetProperty("windows")[0].GetProperty("targetToken").GetString();
+        Assert.Equal(first, second);
+    }
+
+    [Fact]
     public void HostChildWindow_IsMarkedHostWindow()
     {
         lock (HostEnv)
