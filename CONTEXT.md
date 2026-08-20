@@ -70,8 +70,8 @@ _Avoid_: 锁, 队列
 ### Control memory (v2)
 
 **AppKey**:
-控件库的应用归档键：规范化进程镜像路径 + 窗口 className。
-_Avoid_: 应用名, 标题, exe 短名
+控件库的应用归档键。优先 UWP/MSIX 的 Package Family Name，或 Authenticode 主体 + ProductName + ProductVersion；回退为规范化镜像路径。再加窗口 className。同一 AppKey 下多窗口实例共享 Screen/Control 库。
+_Avoid_: 应用名, 标题, exe 短名, 仅路径（作为唯一方案）
 
 **Screen**:
 同一 Window 内一种稳定视觉布局（一页 UI）。按钮只挂在某一个 Screen 下。
