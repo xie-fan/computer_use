@@ -66,3 +66,33 @@ _Avoid_: 复制
 **Coordinator**:
 进程内串行化 Session 副作用的唯一入口。
 _Avoid_: 锁, 队列
+
+### Control memory (v2)
+
+**AppKey**:
+控件库的应用归档键：规范化进程镜像路径 + 窗口 className。
+_Avoid_: 应用名, 标题, exe 短名
+
+**Screen**:
+同一 Window 内一种稳定视觉布局（一页 UI）。按钮只挂在某一个 Screen 下。
+_Avoid_: 页面, 场景（口语可说页面，契约里用 Screen）
+
+**ScreenId**:
+MCP 签发的不透明界面身份。认屏靠指纹像素，不靠标签字符串。
+_Avoid_: 界面名, screenName（那是 ScreenKey）
+
+**ScreenKey**:
+模型给的人类可读标签，只用于展示与 skill 对照。
+_Avoid_: 当身份使用
+
+**Control**:
+挂在某个 Screen 下的可点击视觉块（模板图 + 归一化框）。
+_Avoid_: 按钮坐标, 控件句柄
+
+**ControlId**:
+MCP 签发的不透明控件身份。
+_Avoid_: 开始按钮, AutomationId（UIA 是后路，不是第一期主键）
+
+**Observe**:
+对本 Window 做 Capture、认屏并列出该屏 Control；默认不把 Frame 像素送给模型。
+_Avoid_: 无图截图, 静默截屏

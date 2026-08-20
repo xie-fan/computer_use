@@ -28,6 +28,8 @@ v1 设计。代码必须服从本文。领域语言以 [`CONTEXT.md`](../CONTEXT
 
 **Window** · **TargetToken** · **Frame** · **FrameId** · **Monitor** · **VirtualDesktop** · **CurrentVirtualDesktop** · **HostWindow** · **Capture** · **Action** · **Text** · **Paste** · **Session** · **Coordinator**
 
+v2 控件记忆另增 **AppKey** · **Screen** · **ScreenId** · **ScreenKey** · **Control** · **ControlId** · **Observe**，见 [`control-memory.md`](control-memory.md)。v1 不实施。
+
 ## 3. v1 冻结边界
 
 1. 只操作 CurrentVirtualDesktop。公开 `IVirtualDesktopManager` 仅做归属查询（是否当前、desktop id）。不切换、不枚举其他 VirtualDesktop。
@@ -310,6 +312,7 @@ C#：`net10.0-windows`，`ModelContextProtocol` **2.2.0**，self-contained `win-
 - 连续视频流
 - 剪贴板全格式无损往返
 - 未列宿主（Claude Code / Codex 等）另开 issue
+- 控件记忆 / 按界面模板点击（v2 提案，见 [`control-memory.md`](control-memory.md)）
 
 ## 15. Agent 循环（skill）
 

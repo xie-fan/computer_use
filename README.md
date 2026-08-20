@@ -4,7 +4,7 @@
 
 MCP runtime 一份（`%USERPROFILE%\computer-use-mcp` 里的 `ComputerUse.Mcp.exe` + `launch-mcp.cmd`）。目前支持 **Cursor**、**Grok Build** 和 **pi-coding-agent**：先装 runtime，再按宿主装插件清单。不要把 `mcp.cursor.json` 复制成 Grok 清单。Pi 内核无 MCP，经社区扩展 `pi-mcp-adapter` 接入；本仓不内置 adapter。
 
-领域语言见 [`CONTEXT.md`](CONTEXT.md)。设计见 [`docs/design.md`](docs/design.md)。
+领域语言见 [`CONTEXT.md`](CONTEXT.md)。v1 设计见 [`docs/design.md`](docs/design.md)。按界面隔离的控件记忆（v2 提案，少把整图送给模型）见 [`docs/control-memory.md`](docs/control-memory.md)。
 
 ## 安装 MCP runtime
 
