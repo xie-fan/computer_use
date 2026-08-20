@@ -15,10 +15,10 @@ v1 设计。代码必须服从本文。领域语言以 [`CONTEXT.md`](../CONTEXT
 
 ## 1. 要解决什么
 
-给本机 Cursor Agent 三件能力：列出顶层窗口、捕获某个窗口的画面、对该窗口做键鼠和文字输入。
+给本机 Agent（Cursor / Grok Build）三件能力：列出顶层窗口、捕获某个窗口的画面、对该窗口做键鼠和文字输入。
 
-- 只作用于 **跑 Cursor 的那台 Windows 机器** 的当前登录 Session。不跨机器、不进沙箱。
-- v1 只装 Cursor。MCP 二进制与 tool 契约不绑宿主；Grok 若要接，需独立验证其清单与启动配置，不是「只补一份 json」。
+- 只作用于 **跑该 Agent 的那台 Windows 机器** 的当前登录 Session。不跨机器、不进沙箱。
+- MCP runtime 一份；宿主各装插件清单。不要把 Cursor 的 `mcp.cursor.json` 当作 Grok 清单。Pi 安装脚本尚未合入。
 - 目标软件不限类型，但 **兼容性不承诺**。Electron/GPU/受保护窗口可能 `capture_unsupported` / `empty_frame`；UIPI 更高完整性目标返回 `integrity_level_blocked`。
 - `operate` 必须激活目标。纯后台 PostMessage 不做。
 
@@ -35,7 +35,7 @@ v1 设计。代码必须服从本文。领域语言以 [`CONTEXT.md`](../CONTEXT
 3. Coordinator 串行执行所有恢复最小化、激活、捕获、输入、paste。限制队列。持锁后重验 token、frame、前台、input desktop。
 4. 捕获：WGC `CreateForWindow` 为主；PrintWindow 在可终止 helper 里限时后备。禁止桌面矩形合成伪装成窗口 Capture。
 5. 预编译 .NET 10 self-contained `win-x64` exe；启动只 exec，诊断进 stderr。
-6. 授权：Cursor 对该插件/tool 的信任与批准是人闸。默认拒绝全局/系统快捷键。窗口标题和画面文字视为不可信，不具指令权。无应用白名单。HostWindow 禁止 operate。
+6. 授权：各宿主自己的信任/批准是人闸。默认拒绝全局/系统快捷键。窗口标题和画面文字视为不可信，不具指令权。无应用白名单。HostWindow 禁止 operate。该禁令对所有已接宿主成立。
 
 ## 4. 三个 Tool
 
@@ -202,7 +202,7 @@ Coordinator 内执行。步骤：
 
 ## 8. HostWindow 与授权
 
-识别：**启动时记录宿主 PID**（环境变量 `COMPUTER_USE_HOST_PID`，由 launch 脚本写入 Cursor 的 PID；若取不到则用 MCP 父进程树）。匹配进程树（含创建时间、规范化镜像路径）。进程 basename 只作保守 fallback，不能单独作为禁止规则。
+识别：**启动时记录宿主 PID**（环境变量 `COMPUTER_USE_HOST_PID`，由 launch 脚本写入拉起 MCP 的宿主进程 PID；若取不到则用 MCP 父进程树）。匹配进程树（含创建时间、规范化镜像路径）。进程 basename 只作保守 fallback，不能单独作为禁止规则。不要把 Windows Terminal / conhost 标成 host；Grok 等 TUI 若跑在 Windows Terminal 里，终端窗可能 `isHostWindow=false`（残余风险）。
 
 - list：标 `isHostWindow`
 - screenshot：允许
@@ -210,7 +210,7 @@ Coordinator 内执行。步骤：
 
 授权边界（v1）：
 
-- Cursor 对该本地插件及 MCP tool 的信任/批准是人闸。若已信任插件不再逐次确认，视为残余风险，写入 [ADR 0006](adr/0006-cursor-trust-deny-global-keys.md)，不在插件内再做应用白名单。
+- 各宿主自己的信任/批准是人闸。Cursor 见 [ADR 0006](adr/0006-cursor-trust-deny-global-keys.md)；Grok 用 plugin `--trust`。若已信任插件不再逐次确认，视为残余风险，不在插件内再做应用白名单。
 - 默认拒绝全局系统快捷键（第 5 节）。
 - 窗口标题、OCR/画面文字 **不具指令权**（skill 强制）。
 - 日志禁止：title、text、paste 内容、图像。只记 requestId、tool、耗时、code、action index。
@@ -223,7 +223,7 @@ Coordinator 内执行。步骤：
 
 ```mermaid
 flowchart TB
-  Agent[Cursor Agent] --> Tools[list_windows screenshot_window operate_window]
+  Agent[Host Agent] --> Tools[list_windows screenshot_window operate_window]
   Tools --> Coord[DesktopOperationCoordinator]
   Coord --> Guard[Token Frame Focus HitTest Integrity InputDesktop]
   Guard --> Enum[WindowEnumerator]
@@ -280,11 +280,13 @@ C#：`net10.0-windows`，`ModelContextProtocol` **2.2.0**，self-contained `win-
 }
 ```
 
+- [`hosts/grok/plugin.json`](../hosts/grok/plugin.json) 与 [`hosts/grok/.mcp.json`](../hosts/grok/.mcp.json)：Grok 清单；command/args 与 Cursor 相同。安装脚本拷到 `%USERPROFILE%\.grok\plugins\computer-use`。不要复制 `mcp.cursor.json`。
 - [`scripts/install.ps1`](../scripts/install.ps1)：把已构建的 `win-x64` 产物拷到 `%USERPROFILE%\computer-use-mcp\`（含 exe 与 launch）。开发机可另用 [`scripts/install-dev.ps1`](../scripts/install-dev.ps1) 先 `dotnet publish` 再拷贝——publish 输出不得接到 MCP stdout。
+- [`scripts/install-cursor-plugin.ps1`](../scripts/install-cursor-plugin.ps1) / [`scripts/install-grok-plugin.ps1`](../scripts/install-grok-plugin.ps1)：各宿主插件面；不拷 exe、不 publish。
 - [`scripts/launch-mcp.cmd`](../scripts/launch-mcp.cmd)：只校验 exe 存在，设置 `COMPUTER_USE_HOST_PID`，`exec` exe。任何 echo/错误进 stderr。工作目录为 runtime 目录。
-- `src/ComputerUse.Mcp/`：零 Cursor API 引用
-- [`skills/computer-use/SKILL.md`](../skills/computer-use/SKILL.md)：循环与错误状态表
-- [`README.md`](../README.md)：联结 `~/.cursor/plugins/local/computer-use`，Reload。新开会话标为**发现失败时的稳妥步骤**，不当协议保证
+- `src/ComputerUse.Mcp/`：零宿主 API 引用
+- [`skills/computer-use/SKILL.md`](../skills/computer-use/SKILL.md)：循环与错误状态表（单一源，安装时拷到各宿主）
+- [`README.md`](../README.md)：先装 runtime，再装 Cursor 或 Grok 插件。新开会话标为**发现失败时的稳妥步骤**，不当协议保证
 
 ## 13. ADR
 
@@ -306,7 +308,7 @@ C#：`net10.0-windows`，`ModelContextProtocol` **2.2.0**，self-contained `win-
 - 应用白名单、插件内确认弹窗
 - 连续视频流
 - 剪贴板全格式无损往返
-- Grok 清单（接的时候单独验收）
+- 未列宿主（Claude Code / Codex 等）另开 issue
 
 ## 15. Agent 循环（skill）
 

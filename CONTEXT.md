@@ -15,7 +15,7 @@ _Avoid_: 应用, 标签页, 窗体, 桌面
 _Avoid_: WindowHandle, 窗口 ID, HWND
 
 **HostWindow**:
-驱动本 MCP 的 Agent 宿主进程树里的窗口（v1 为 Cursor）。
+驱动本 MCP 的 Agent 宿主进程树里的窗口（由 `COMPUTER_USE_HOST_PID` 与进程树识别，不按 exe 名单独禁窗）。
 _Avoid_: IDE 窗口
 
 ### Capture
