@@ -55,13 +55,20 @@ internal static class ZnccMatcher
         int templateStride,
         double minScale,
         double maxScale,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        int searchTimeoutMs = -1)
     {
         ArgumentNullException.ThrowIfNull(haystack);
         ArgumentNullException.ThrowIfNull(template);
 
         if (cancellationToken.IsCancellationRequested)
             return Empty(TemplateMatchStatus.NotFound);
+
+        var timeoutMs = searchTimeoutMs < 0 ? Limits.V1.ZnccSearchTimeoutMs : searchTimeoutMs;
+        using var searchDeadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        if (timeoutMs > 0)
+            searchDeadline.CancelAfter(timeoutMs);
+        var token = searchDeadline.Token;
 
         var searchMin = Math.Max(minScale, Limits.V1.TemplateScaleMin);
         var searchMax = Math.Min(maxScale, Limits.V1.TemplateScaleMax);
@@ -80,13 +87,13 @@ internal static class ZnccMatcher
         foreach (var (width, height, pixels) in PyramidTemplates(
                      tmpl, templateWidth, templateHeight, searchMin, searchMax))
         {
-            if (cancellationToken.IsCancellationRequested)
+            if (token.IsCancellationRequested)
                 return Empty(TemplateMatchStatus.NotFound);
             if (width > hayWidth || height > hayHeight)
                 continue;
 
             if (!MatchAtScale(
-                    hay, hayWidth, hayHeight, pixels, width, height, cancellationToken, ref best, ref second))
+                    hay, hayWidth, hayHeight, pixels, width, height, token, ref best, ref second))
                 return Empty(TemplateMatchStatus.NotFound);
         }
 

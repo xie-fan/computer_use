@@ -27,6 +27,8 @@ internal sealed record Limits
     public int MaxScreensPerAppKey { get; init; } = 32;
     public int MaxControlsPerScreen { get; init; } = 64;
     public int MaxTemplateLongEdge { get; init; } = 256;
+    /// <summary>ZNCC 搜索硬超时，远小于 RequestDeadlineMs，避免小模板全帧回退饿死 Coordinator。</summary>
+    public int ZnccSearchTimeoutMs { get; init; } = 1_500;
     public int MaxMemoryLibraryBytes { get; init; } = 256 * 1024 * 1024;
     public int MemorySoftTtlDays { get; init; } = 30;
     public int MinCropEdgePx { get; init; } = 24;

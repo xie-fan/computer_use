@@ -1,3 +1,4 @@
+using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Tests.Support;
 using ComputerUse.Mcp.Vision;
 
@@ -137,6 +138,26 @@ public sealed class ScreenIdentifierTests
 
         var result = ScreenIdentifier.Identify(lookalike, Size, Size, Size * 4, library);
 
+        Assert.NotEqual(ScreenIdentifyStatus.Identified, result.Status);
+    }
+
+    [Fact]
+    public void SamePatternWithDcOffset_ZnccMatchesButMaeRejects()
+    {
+        var remembered = BgraFrames.Solid(Size, Size, 90, 90, 90);
+        BgraFrames.Paste(remembered, Size, BgraFrames.Checker(Patch, Patch, 2, 64, 192), Patch, Patch, 8, 8);
+        BgraFrames.Paste(remembered, Size, BgraFrames.Checker(Patch, Patch, 3, 70, 180), Patch, Patch, 120, 120);
+        var shifted = BgraFrames.AddChannelOffset(remembered, 48);
+        var fingerprint = BgraFrames.Crop(remembered, Size, 8, 8, Patch, Patch);
+        var zncc = ZnccMatcher.Match(
+            shifted, Size, Size, Size * 4,
+            fingerprint, Patch, Patch, Patch * 4,
+            Limits.V1.TemplateScaleMin,
+            Limits.V1.TemplateScaleMax);
+        Assert.Equal(TemplateMatchStatus.Found, zncc.Status);
+
+        var library = new[] { Entry("screen-a", remembered, "ctrl-a") };
+        var result = ScreenIdentifier.Identify(shifted, Size, Size, Size * 4, library);
         Assert.NotEqual(ScreenIdentifyStatus.Identified, result.Status);
     }
 

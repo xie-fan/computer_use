@@ -328,7 +328,8 @@ internal sealed class ClickControlService
             templateStride,
             _limits.TemplateScaleMin,
             _limits.TemplateScaleMax,
-            cancellationToken);
+            cancellationToken,
+            _limits.ZnccSearchTimeoutMs);
     }
 
     private async Task<FrameRecord> CaptureLiveFrameAsync(

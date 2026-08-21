@@ -350,7 +350,97 @@ public sealed class ClickControlServiceTests : IDisposable
         Assert.Empty(env.Input.Log);
     }
 
-    private Env Create(bool host, string? imagePath = @"c:\apps\app.exe")
+    [Fact]
+    public async Task Template256MissingOnHdFrame_SkipsFullFrameAndReturnsNotFoundQuickly()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var remembered = HdFrame(seed: 3, withBigControl: true, bigControlEdge: 256);
+        var screenId = remember.RememberScreen(
+            remembered, AppKeyValue, "home", HdSpread(), hostWindow: false);
+        remember.RememberControl(
+            remembered, AppKeyValue, screenId, "anchor", new PixelBox(8, 8, 32, 32), hostWindow: false);
+        var controlId = remember.RememberControl(
+            remembered, AppKeyValue, screenId, "huge", new PixelBox(200, 200, 256, 256), hostWindow: false);
+
+        PrimeCapture(env, HdFrame(seed: 3, withBigControl: false, frameId: "fr1.live", visualized: false));
+
+        var sw = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAsync<ComputerUseException>(() =>
+            env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None));
+        sw.Stop();
+
+        Assert.Equal(ErrorCodes.TemplateNotFound, ex.Code);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), sw.Elapsed.ToString());
+        Assert.Empty(env.Input.Log);
+    }
+
+    [Fact]
+    public async Task MidSizeTemplateMissingOnHdFrame_TimesOutAndUnblocksCoordinator()
+    {
+        var limits = Limits.V1;
+        var coordinator = new DesktopOperationCoordinator(limits);
+        var env = Create(host: false, coordinator: coordinator, limits: limits);
+        var remember = new RememberService(env.Catalog, limits);
+        var remembered = HdFrame(seed: 3, withBigControl: false, withMidControl: true);
+        var screenId = remember.RememberScreen(
+            remembered, AppKeyValue, "home", HdSpread(), hostWindow: false);
+        remember.RememberControl(
+            remembered, AppKeyValue, screenId, "anchor", new PixelBox(8, 8, 32, 32), hostWindow: false);
+        var controlId = remember.RememberControl(
+            remembered, AppKeyValue, screenId, "mid", new PixelBox(400, 200, 32, 32), hostWindow: false);
+
+        PrimeCapture(env, HdFrame(seed: 3, withBigControl: false, frameId: "fr1.live", visualized: false));
+
+        var sw = Stopwatch.StartNew();
+        var clickTask = env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
+        var other = coordinator.RunAsync(_ => Task.FromResult(7), CancellationToken.None);
+
+        var ex = await Assert.ThrowsAsync<ComputerUseException>(() => clickTask);
+        Assert.Equal(7, await other);
+        sw.Stop();
+
+        Assert.Equal(ErrorCodes.TemplateNotFound, ex.Code);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5), sw.Elapsed.ToString());
+        Assert.True(sw.Elapsed < TimeSpan.FromMilliseconds(limits.RequestDeadlineMs), sw.Elapsed.ToString());
+        Assert.Empty(env.Input.Log);
+    }
+
+    [Fact]
+    public async Task ScaledLiveFrame_MapsClickThroughCoordinateMapper()
+    {
+        var limits = Limits.V1 with { MaxReturnedLongEdge = 400 };
+        var env = Create(host: false, limits: limits);
+        env.World.Windows[1].WindowRect = new ScreenRect(0, 0, 800, 800);
+        env.World.Windows[1].ExtendedFrameBounds = new ScreenRect(0, 0, 800, 800);
+
+        var remember = new RememberService(env.Catalog, limits);
+        var remembered = ScreenFrame(seed: 3);
+        env.Frames.Add(remembered);
+        var screenId = remember.RememberScreen(remembered, AppKeyValue, "home", Spread(), hostWindow: false);
+        var controlId = remember.RememberControl(
+            remembered, AppKeyValue, screenId, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+
+        var livePixels = BgraFrames.ScaleNearest(remembered.Bgra!, 400, 400, 2);
+        env.Capture.Pixels = livePixels;
+        env.Capture.Width = 800;
+        env.Capture.Height = 800;
+
+        var clicked = await env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
+        var move = Assert.Single(env.Input.Log, line => line.StartsWith("move:", StringComparison.Ordinal));
+        var parts = move["move:".Length..].Split(',');
+        var x = int.Parse(parts[0]);
+        var y = int.Parse(parts[1]);
+        Assert.InRange(x, 40, 56);
+        Assert.InRange(y, 40, 56);
+        Assert.Equal(controlId, clicked.ControlId);
+    }
+
+    private Env Create(
+        bool host,
+        string? imagePath = @"c:\apps\app.exe",
+        Limits? limits = null,
+        DesktopOperationCoordinator? coordinator = null)
     {
         var world = new FakeWorld();
         world.Processes[1] = new FakeProcess { Pid = 1, CreateTimeUtc = 1, ImagePath = imagePath };
@@ -362,32 +452,7 @@ public sealed class ClickControlServiceTests : IDisposable
             WindowRect = new ScreenRect(0, 0, 400, 400),
             ExtendedFrameBounds = new ScreenRect(0, 0, 400, 400)
         };
-        var tokens = new TargetTokenService();
-        var token = tokens.Issue(1, 1, 1, "Notepad");
-        var frames = new FrameCache(Limits.V1);
-        var input = new RecordingInjector();
-        var capture = new FakeCapture { Width = 400, Height = 400, Pixels = BgraFrames.Solid(400, 400, 0, 0, 0) };
-        var activator = new FakeActivator { Foreground = 1 };
-        var catalog = new MemoryCatalog(_root, Limits.V1);
-        var click = new ClickControlService(
-            new DesktopOperationCoordinator(Limits.V1),
-            new OperationIdCache(Limits.V1),
-            tokens,
-            frames,
-            world,
-            new FakeMonitors(),
-            world,
-            new FakeDesktops(),
-            new FakeSession(),
-            activator,
-            new FakeHitTester { Hit = 1 },
-            input,
-            capture,
-            new StubHost { Result = host },
-            catalog,
-            Limits.V1,
-            new AppIdentityFactory(world));
-        return new Env(click, token, frames, catalog, input, capture, activator, world);
+        return Build(world, host, 1, "Notepad", limits, coordinator);
     }
 
     private Env CreatePfn()
@@ -461,19 +526,27 @@ public sealed class ClickControlServiceTests : IDisposable
         return new Env(click, token1, frames, catalog, input, capture, activator, world, token2);
     }
 
-    private Env Build(FakeWorld world, bool host, nint hwnd, string className)
+    private Env Build(
+        FakeWorld world,
+        bool host,
+        nint hwnd,
+        string className,
+        Limits? limits = null,
+        DesktopOperationCoordinator? coordinator = null)
     {
+        limits ??= Limits.V1;
+        coordinator ??= new DesktopOperationCoordinator(limits);
         var tokens = new TargetTokenService();
         var proc = world.Processes[(uint)hwnd];
         var token = tokens.Issue(hwnd, proc.Pid, proc.CreateTimeUtc, className);
-        var frames = new FrameCache(Limits.V1);
+        var frames = new FrameCache(limits);
         var input = new RecordingInjector();
         var capture = new FakeCapture { Width = 400, Height = 400, Pixels = BgraFrames.Solid(400, 400, 0, 0, 0) };
         var activator = new FakeActivator { Foreground = hwnd };
-        var catalog = new MemoryCatalog(_root, Limits.V1);
+        var catalog = new MemoryCatalog(_root, limits);
         var click = new ClickControlService(
-            new DesktopOperationCoordinator(Limits.V1),
-            new OperationIdCache(Limits.V1),
+            coordinator,
+            new OperationIdCache(limits),
             tokens,
             frames,
             world,
@@ -487,7 +560,7 @@ public sealed class ClickControlServiceTests : IDisposable
             capture,
             new StubHost { Result = host },
             catalog,
-            Limits.V1,
+            limits,
             new AppIdentityFactory(world));
         return new Env(click, token, frames, catalog, input, capture, activator, world);
     }
@@ -518,7 +591,9 @@ public sealed class ClickControlServiceTests : IDisposable
         int seed,
         bool withBigControl,
         string frameId = "fr1.hd",
-        bool visualized = true)
+        bool visualized = true,
+        int bigControlEdge = 64,
+        bool withMidControl = false)
     {
         const int width = 1280;
         const int height = 720;
@@ -526,7 +601,9 @@ public sealed class ClickControlServiceTests : IDisposable
         BgraFrames.Paste(bgra, width, BgraFrames.Checker(32, 32, 2), 32, 32, 8, 8);
         BgraFrames.Paste(bgra, width, BgraFrames.Noise(32, 32, seed), 32, 32, 1200, 680);
         if (withBigControl)
-            BgraFrames.Paste(bgra, width, BgraFrames.Checker(64, 64, 3), 64, 64, 200, 200);
+            BgraFrames.Paste(bgra, width, BgraFrames.Checker(bigControlEdge, bigControlEdge, 3), bigControlEdge, bigControlEdge, 200, 200);
+        if (withMidControl)
+            BgraFrames.Paste(bgra, width, BgraFrames.Checker(32, 32, 7), 32, 32, 400, 200);
         return TestFrames.Create(width, height, bgra, visualized, frameId);
     }
 

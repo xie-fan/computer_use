@@ -96,9 +96,30 @@ public sealed class ZnccMatcherTests
     public void LargeTemplateOnHdHaystack_SkipsFullFrameFallback()
     {
         Assert.True(ZnccMatcher.ShouldSkipFullFrameFallback(64, 64, 1280, 720));
+        Assert.True(ZnccMatcher.ShouldSkipFullFrameFallback(256, 256, 1280, 720));
         Assert.False(ZnccMatcher.ShouldSkipFullFrameFallback(32, 32, 1280, 720));
         Assert.False(ZnccMatcher.ShouldSkipFullFrameFallback(64, 64, 100, 80));
         Assert.False(ZnccMatcher.ShouldSkipFullFrameFallback(12, 12, 48, 48));
+    }
+
+    [Fact]
+    public void SearchTimeoutDuringScan_ReturnsNotFoundBeforeRequestDeadline()
+    {
+        var hay = BgraFrames.Noise(1280, 720, seed: 3);
+        var tmpl = BgraFrames.Checker(48, 48, cell: 3);
+        var sw = Stopwatch.StartNew();
+        var result = ZnccMatcher.Match(
+            hay, 1280, 720, 1280 * 4,
+            tmpl, 48, 48, 48 * 4,
+            Limits.V1.TemplateScaleMin,
+            Limits.V1.TemplateScaleMax,
+            CancellationToken.None,
+            searchTimeoutMs: 15);
+        sw.Stop();
+
+        Assert.Equal(TemplateMatchStatus.NotFound, result.Status);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), sw.Elapsed.ToString());
+        Assert.True(sw.Elapsed < TimeSpan.FromMilliseconds(Limits.V1.RequestDeadlineMs / 4), sw.Elapsed.ToString());
     }
 
     private static void Paste(byte[] dest, int destW, byte[] src, int srcW, int srcH, int x, int y)

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ComputerUse.Mcp.Coordination;
 using ComputerUse.Mcp.Domain;
 
@@ -75,5 +76,35 @@ public sealed class CoordinatorTests
         firstHold.TrySetResult();
         await Task.WhenAll(a, b);
         Assert.Equal(new[] { 1, 2, 3 }, order);
+    }
+
+    [Fact]
+    public async Task FirstOpBoundByInnerTimeout_UnblocksQueuedOpBeforeRequestDeadline()
+    {
+        var limits = Limits.V1 with { RequestDeadlineMs = 8_000, ZnccSearchTimeoutMs = 80 };
+        var coordinator = new DesktopOperationCoordinator(limits);
+        var sw = Stopwatch.StartNew();
+
+        var first = coordinator.RunAsync(async ct =>
+        {
+            using var search = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            search.CancelAfter(limits.ZnccSearchTimeoutMs);
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), search.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return "timed-out";
+            }
+
+            return "finished";
+        }, CancellationToken.None);
+
+        var second = coordinator.RunAsync(_ => Task.FromResult("second"), CancellationToken.None);
+        Assert.Equal("timed-out", await first);
+        Assert.Equal("second", await second);
+        sw.Stop();
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), sw.Elapsed.ToString());
     }
 }

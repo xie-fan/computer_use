@@ -28,6 +28,8 @@ public sealed class ControlMemoryContractTests
         Assert.Equal(32, limits.MaxScreensPerAppKey);
         Assert.Equal(64, limits.MaxControlsPerScreen);
         Assert.Equal(256, limits.MaxTemplateLongEdge);
+        Assert.Equal(1_500, limits.ZnccSearchTimeoutMs);
+        Assert.True(limits.ZnccSearchTimeoutMs * 4 < limits.RequestDeadlineMs);
         Assert.Equal(256 * 1024 * 1024, limits.MaxMemoryLibraryBytes);
         Assert.Equal(30, limits.MemorySoftTtlDays);
         Assert.Equal(24, limits.MinCropEdgePx);
@@ -89,5 +91,6 @@ public sealed class ControlMemoryContractTests
         var json = System.Text.Json.JsonSerializer.Serialize(Limits.V1.ToPublicDto());
         Assert.DoesNotContain("maxScreensPerAppKey", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("minCropEdgePx", json, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("znccSearchTimeoutMs", json, StringComparison.OrdinalIgnoreCase);
     }
 }

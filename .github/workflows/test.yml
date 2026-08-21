@@ -1,0 +1,16 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Unit tests (observe identify + click DTO)
+        run: dotnet test tests/ComputerUse.Mcp.Tests/ComputerUse.Mcp.Tests.csproj --nologo --configuration Release
