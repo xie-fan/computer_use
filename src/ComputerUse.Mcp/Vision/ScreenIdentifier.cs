@@ -99,13 +99,36 @@ internal static class ScreenIdentifier
         return library;
     }
 
+    public static IReadOnlyList<StoredControlLayout> ControlsFrom(IReadOnlyList<CatalogControl> controls)
+    {
+        ArgumentNullException.ThrowIfNull(controls);
+        var layouts = new StoredControlLayout[controls.Count];
+        for (var i = 0; i < controls.Count; i++)
+        {
+            var stored = controls[i];
+            layouts[i] = new StoredControlLayout(
+                stored.ControlId,
+                stored.Nx,
+                stored.Ny,
+                stored.Nw,
+                stored.Nh,
+                stored.Width,
+                stored.Height,
+                stored.Bgra);
+        }
+
+        return layouts;
+    }
+
     public static ScreenIdentifyResult Identify(
         byte[] frameBgra,
         int width,
         int height,
         int stride,
         IReadOnlyList<StoredScreenCatalogEntry> library,
-        string? requiredScreenId = null)
+        string? requiredScreenId = null,
+        Func<string, IReadOnlyList<StoredControlLayout>>? loadNominatedControls = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(frameBgra);
         ArgumentNullException.ThrowIfNull(library);
@@ -116,6 +139,7 @@ internal static class ScreenIdentifier
         if (library.Count == 0)
             return Finalize(ScreenIdentifyStatus.Unknown, null, [], requiredScreenId);
 
+        cancellationToken.ThrowIfCancellationRequested();
         var query = PerceptualHash.Compute(frameBgra, width, height, stride);
         var hashLibrary = new (string Id, PerceptualHashValue Hash)[library.Count];
         var byId = new Dictionary<string, StoredScreenCatalogEntry>(library.Count, StringComparer.Ordinal);
@@ -131,11 +155,21 @@ internal static class ScreenIdentifier
         var survivors = new List<string>();
         for (var i = 0; i < nominated.Count; i++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var id = nominated[i].Id;
             candidateIds[i] = id;
             if (!byId.TryGetValue(id, out var entry))
                 continue;
-            if (CandidateSurvives(frameBgra, width, height, stride, entry))
+
+            // 提名后再加载这 1–3 个候选的 Control PNG，供 LayoutHolds MAE（#9）。
+            var controls = loadNominatedControls is null
+                ? entry.Controls
+                : loadNominatedControls(id);
+            if (controls.Count == 0)
+                controls = entry.Controls;
+
+            var hydrated = entry with { Controls = controls };
+            if (CandidateSurvives(frameBgra, width, height, stride, hydrated, cancellationToken))
                 survivors.Add(id);
         }
 
@@ -167,7 +201,8 @@ internal static class ScreenIdentifier
         int width,
         int height,
         int stride,
-        StoredScreenCatalogEntry entry)
+        StoredScreenCatalogEntry entry,
+        CancellationToken cancellationToken)
     {
         var requiredMatches = entry.Fingerprints.Count <= 1 ? 1 : 2;
         if (entry.Fingerprints.Count < requiredMatches)
@@ -176,8 +211,12 @@ internal static class ScreenIdentifier
         var matches = new MatchedBox[entry.Fingerprints.Count];
         for (var i = 0; i < entry.Fingerprints.Count; i++)
         {
-            if (!TryMatchFingerprint(frameBgra, width, height, stride, entry.Fingerprints[i], out matches[i]))
+            if (!TryMatchFingerprint(
+                    frameBgra, width, height, stride, entry.Fingerprints[i], cancellationToken, out matches[i]))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
                 return false;
+            }
         }
 
         if (!FingerprintsSurviveMae(frameBgra, width, height, stride, entry.Fingerprints))
@@ -355,6 +394,7 @@ internal static class ScreenIdentifier
         int height,
         int stride,
         ScreenFingerprint fingerprint,
+        CancellationToken cancellationToken,
         out MatchedBox match)
     {
         match = default;
@@ -372,11 +412,14 @@ internal static class ScreenIdentifier
         var roi = ExpandRoi(roiX, roiY, roiW, roiH, width, height);
         var roiLargeEnough = roi.Width >= fingerprint.Width && roi.Height >= fingerprint.Height;
         if (roiLargeEnough
-            && TryMatchHaystack(frame, width, height, stride, roi, fingerprint, templateStride, out match))
+            && TryMatchHaystack(
+                frame, width, height, stride, roi, fingerprint, templateStride, cancellationToken, out match))
             return true;
 
         var fullFrame = roi.X == 0 && roi.Y == 0 && roi.Width == width && roi.Height == height;
         if (fullFrame)
+            return false;
+        if (ZnccMatcher.ShouldSkipFullFrameFallback(fingerprint.Width, fingerprint.Height, width, height))
             return false;
 
         return TryMatchHaystack(
@@ -384,6 +427,7 @@ internal static class ScreenIdentifier
             new SearchRect(0, 0, width, height),
             fingerprint,
             templateStride,
+            cancellationToken,
             out match);
     }
 
@@ -395,6 +439,7 @@ internal static class ScreenIdentifier
         SearchRect roi,
         ScreenFingerprint fingerprint,
         int templateStride,
+        CancellationToken cancellationToken,
         out MatchedBox match)
     {
         match = default;
@@ -430,7 +475,8 @@ internal static class ScreenIdentifier
             fingerprint.Height,
             templateStride,
             Limits.V1.TemplateScaleMin,
-            Limits.V1.TemplateScaleMax);
+            Limits.V1.TemplateScaleMax,
+            cancellationToken);
 
         if (result.Status != TemplateMatchStatus.Found)
             return false;

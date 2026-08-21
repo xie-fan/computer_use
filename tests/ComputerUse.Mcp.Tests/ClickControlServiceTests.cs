@@ -7,6 +7,7 @@ using ComputerUse.Mcp.Memory;
 using ComputerUse.Mcp.Services;
 using ComputerUse.Mcp.Tests.Fakes;
 using ComputerUse.Mcp.Tests.Support;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace ComputerUse.Mcp.Tests;
@@ -261,6 +262,31 @@ public sealed class ClickControlServiceTests : IDisposable
             Assert.Equal("fr1.keep" + i, env.Frames.Require("fr1.keep" + i).FrameId);
     }
 
+    [Fact]
+    public async Task LargeTemplateMissingOnHdFrame_SkipsFullFrameAndReturnsNotFoundQuickly()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var remembered = HdFrame(seed: 3, withBigControl: true);
+        var screenId = remember.RememberScreen(
+            remembered, AppKeyValue, "home", HdSpread(), hostWindow: false);
+        remember.RememberControl(
+            remembered, AppKeyValue, screenId, "anchor", new PixelBox(8, 8, 32, 32), hostWindow: false);
+        var controlId = remember.RememberControl(
+            remembered, AppKeyValue, screenId, "big", new PixelBox(200, 200, 64, 64), hostWindow: false);
+
+        PrimeCapture(env, HdFrame(seed: 3, withBigControl: false, frameId: "fr1.live", visualized: false));
+
+        var sw = Stopwatch.StartNew();
+        var ex = await Assert.ThrowsAsync<ComputerUseException>(() =>
+            env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None));
+        sw.Stop();
+
+        Assert.Equal(ErrorCodes.TemplateNotFound, ex.Code);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), sw.Elapsed.ToString());
+        Assert.Empty(env.Input.Log);
+    }
+
     private Env Create(bool host, string? imagePath = @"c:\apps\app.exe")
     {
         var world = new FakeWorld();
@@ -422,6 +448,24 @@ public sealed class ClickControlServiceTests : IDisposable
         AppKeyResolver.Compute(new AppIdentity(null, null, null, null, @"c:\apps\app.exe", "Notepad")).Value;
 
     private static PixelBox[] Spread() => [new(8, 8, 32, 32), new(320, 320, 32, 32)];
+
+    private static PixelBox[] HdSpread() => [new(8, 8, 32, 32), new(1200, 680, 32, 32)];
+
+    private static FrameRecord HdFrame(
+        int seed,
+        bool withBigControl,
+        string frameId = "fr1.hd",
+        bool visualized = true)
+    {
+        const int width = 1280;
+        const int height = 720;
+        var bgra = BgraFrames.Solid(width, height, 20, 20, 20);
+        BgraFrames.Paste(bgra, width, BgraFrames.Checker(32, 32, 2), 32, 32, 8, 8);
+        BgraFrames.Paste(bgra, width, BgraFrames.Noise(32, 32, seed), 32, 32, 1200, 680);
+        if (withBigControl)
+            BgraFrames.Paste(bgra, width, BgraFrames.Checker(64, 64, 3), 64, 64, 200, 200);
+        return TestFrames.Create(width, height, bgra, visualized, frameId);
+    }
 
     private sealed record Env(
         ClickControlService Click,

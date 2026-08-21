@@ -162,6 +162,36 @@ public sealed class ObserveServiceTests : IDisposable
         Assert.Contains(env.Input!.Log, line => line.StartsWith("mouse:Left:down", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task MissingPeerControlPng_StillIdentifiesScreenA()
+    {
+        var env = Create(host: false, width: 400);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var bgraA = UniqueObserveFrame();
+        var bgraB = AlternateObserveFrame();
+        env.Capture.Pixels = bgraA;
+        env.Capture.Width = 400;
+        env.Capture.Height = 400;
+        var appKey = AppKeyFor(env);
+
+        var frameA = TestFrames.Create(400, 400, bgraA, visualized: true);
+        var screenA = remember.RememberScreen(
+            frameA, appKey, "a", [new PixelBox(8, 8, 32, 32), new PixelBox(320, 320, 32, 32)], hostWindow: false);
+        remember.RememberControl(frameA, appKey, screenA, "go-a", new PixelBox(8, 8, 32, 32), hostWindow: false);
+
+        var frameB = TestFrames.Create(400, 400, bgraB, visualized: true, frameId: "fr1.b");
+        var screenB = remember.RememberScreen(
+            frameB, appKey, "b", [new PixelBox(8, 8, 32, 32), new PixelBox(320, 320, 32, 32)], hostWindow: false);
+        var controlB = remember.RememberControl(
+            frameB, appKey, screenB, "go-b", new PixelBox(8, 8, 32, 32), hostWindow: false);
+
+        var pngB = Directory.GetFiles(_root, controlB + ".png", SearchOption.AllDirectories).Single();
+        File.Delete(pngB);
+
+        var result = await env.Svc.ObserveAsync(env.Token, CancellationToken.None);
+        Assert.Equal(screenA, result.ScreenId);
+    }
+
     private ObserveEnv Create(
         bool host,
         string? imagePath = @"c:\apps\app.exe",
@@ -274,6 +304,14 @@ public sealed class ObserveServiceTests : IDisposable
         var frame = BgraFrames.Solid(400, 400, 20, 20, 20);
         BgraFrames.Paste(frame, 400, BgraFrames.Checker(32, 32, 2), 32, 32, 8, 8);
         BgraFrames.Paste(frame, 400, BgraFrames.Noise(32, 32, 7), 32, 32, 320, 320);
+        return frame;
+    }
+
+    private static byte[] AlternateObserveFrame()
+    {
+        var frame = BgraFrames.Solid(400, 400, 20, 20, 20);
+        BgraFrames.Paste(frame, 400, BgraFrames.Checker(32, 32, 5), 32, 32, 8, 8);
+        BgraFrames.Paste(frame, 400, BgraFrames.Noise(32, 32, 91), 32, 32, 320, 320);
         return frame;
     }
 

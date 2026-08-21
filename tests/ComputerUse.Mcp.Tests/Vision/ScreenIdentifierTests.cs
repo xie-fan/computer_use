@@ -140,6 +140,72 @@ public sealed class ScreenIdentifierTests
         Assert.NotEqual(ScreenIdentifyStatus.Identified, result.Status);
     }
 
+    [Fact]
+    public void Identify_LoadsControlPixelsOnlyForNominatedScreens()
+    {
+        var frameA = ScreenA();
+        var originals = new Dictionary<string, IReadOnlyList<StoredControlLayout>>(StringComparer.Ordinal)
+        {
+            ["screen-a"] = [ControlFrom(frameA, "ctrl-a", 8, 8, Patch, Patch)],
+            ["screen-b"] = [ControlFrom(ScreenB(), "ctrl-b", 8, 8, Patch, Patch)],
+            ["screen-c"] = [ControlFrom(BgraFrames.Noise(Size, Size, 201), "ctrl-c", 8, 8, Patch, Patch)],
+            ["screen-d"] = [ControlFrom(BgraFrames.Noise(Size, Size, 401), "ctrl-d", 8, 8, Patch, Patch)]
+        };
+        var library = new[]
+        {
+            StripControlPixels(Entry("screen-a", frameA, "ctrl-a")),
+            StripControlPixels(Entry("screen-b", ScreenB(), "ctrl-b")),
+            StripControlPixels(NoiseEntry("screen-c", 201)),
+            StripControlPixels(NoiseEntry("screen-d", 401))
+        };
+        var loaded = new HashSet<string>(StringComparer.Ordinal);
+
+        var result = ScreenIdentifier.Identify(
+            frameA,
+            Size,
+            Size,
+            Size * 4,
+            library,
+            loadNominatedControls: id =>
+            {
+                loaded.Add(id);
+                return originals[id];
+            });
+
+        Assert.Equal(ScreenIdentifyStatus.Identified, result.Status);
+        Assert.Equal("screen-a", result.ScreenId);
+        Assert.Contains("screen-a", loaded);
+        Assert.True(loaded.Count <= 3);
+        Assert.Equal(3, loaded.Count);
+        Assert.Single(originals.Keys.Except(loaded));
+    }
+
+    private static StoredScreenCatalogEntry StripControlPixels(StoredScreenCatalogEntry entry)
+    {
+        var stripped = new StoredControlLayout[entry.Controls.Count];
+        for (var i = 0; i < entry.Controls.Count; i++)
+        {
+            var control = entry.Controls[i];
+            stripped[i] = control with { Bgra = null };
+        }
+
+        return entry with { Controls = stripped };
+    }
+
+    private static StoredScreenCatalogEntry NoiseEntry(string screenId, int seed)
+    {
+        var frame = BgraFrames.Noise(Size, Size, seed);
+        var hash = PerceptualHash.Compute(frame, Size, Size, Size * 4);
+        return new StoredScreenCatalogEntry(
+            screenId,
+            hash,
+            [
+                Fingerprint(frame, 8, 8),
+                Fingerprint(frame, 120, 120)
+            ],
+            [ControlFrom(frame, "ctrl", 8, 8, Patch, Patch)]);
+    }
+
     private static byte[] ScreenA()
     {
         var frame = BgraFrames.Solid(Size, Size, 30, 30, 30);

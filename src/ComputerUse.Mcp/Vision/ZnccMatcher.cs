@@ -26,6 +26,24 @@ internal static class ZnccMatcher
     private const double VarianceEpsilon = 1e-6;
     private const double ScaleEpsilon = 1e-12;
 
+    /// <summary>模板长边达到此值且 hay 明显更大时，禁止 ROI 失败后的全帧回退。</summary>
+    internal const int FullFrameMinTemplateLongEdge = 64;
+    private const int FullFrameHaystackToTemplateRatio = 2;
+
+    public static bool ShouldSkipFullFrameFallback(
+        int templateWidth,
+        int templateHeight,
+        int hayWidth,
+        int hayHeight)
+    {
+        var templateLong = Math.Max(templateWidth, templateHeight);
+        if (templateLong < FullFrameMinTemplateLongEdge)
+            return false;
+
+        var hayLong = Math.Max(hayWidth, hayHeight);
+        return hayLong > templateLong * FullFrameHaystackToTemplateRatio;
+    }
+
     public static TemplateMatchResult Match(
         byte[] haystack,
         int hayWidth,
@@ -36,10 +54,14 @@ internal static class ZnccMatcher
         int templateHeight,
         int templateStride,
         double minScale,
-        double maxScale)
+        double maxScale,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(haystack);
         ArgumentNullException.ThrowIfNull(template);
+
+        if (cancellationToken.IsCancellationRequested)
+            return Empty(TemplateMatchStatus.NotFound);
 
         var searchMin = Math.Max(minScale, Limits.V1.TemplateScaleMin);
         var searchMax = Math.Min(maxScale, Limits.V1.TemplateScaleMax);
@@ -58,10 +80,14 @@ internal static class ZnccMatcher
         foreach (var (width, height, pixels) in PyramidTemplates(
                      tmpl, templateWidth, templateHeight, searchMin, searchMax))
         {
+            if (cancellationToken.IsCancellationRequested)
+                return Empty(TemplateMatchStatus.NotFound);
             if (width > hayWidth || height > hayHeight)
                 continue;
 
-            MatchAtScale(hay, hayWidth, hayHeight, pixels, width, height, ref best, ref second);
+            if (!MatchAtScale(
+                    hay, hayWidth, hayHeight, pixels, width, height, cancellationToken, ref best, ref second))
+                return Empty(TemplateMatchStatus.NotFound);
         }
 
         if (best is null || best.Value.Score < MinFoundScore)
@@ -74,13 +100,14 @@ internal static class ZnccMatcher
         return ToResult(TemplateMatchStatus.Found, best, second);
     }
 
-    private static void MatchAtScale(
+    private static bool MatchAtScale(
         float[] hay,
         int hayWidth,
         int hayHeight,
         float[] template,
         int templateWidth,
         int templateHeight,
+        CancellationToken cancellationToken,
         ref Candidate? best,
         ref Candidate? second)
     {
@@ -100,7 +127,7 @@ internal static class ZnccMatcher
         }
 
         if (templateEnergy < VarianceEpsilon)
-            return;
+            return true;
 
         var templateNorm = Math.Sqrt(templateEnergy);
         var integralStride = hayWidth + 1;
@@ -112,6 +139,9 @@ internal static class ZnccMatcher
         var maxY = hayHeight - templateHeight;
         for (var y = 0; y <= maxY; y++)
         {
+            if (cancellationToken.IsCancellationRequested)
+                return false;
+
             for (var x = 0; x <= maxX; x++)
             {
                 var windowSum = RectSum(sum, integralStride, x, y, templateWidth, templateHeight);
@@ -133,6 +163,8 @@ internal static class ZnccMatcher
                 Consider(new Candidate(x, y, templateWidth, templateHeight, score), ref best, ref second);
             }
         }
+
+        return true;
     }
 
     private static void Consider(Candidate current, ref Candidate? best, ref Candidate? second)

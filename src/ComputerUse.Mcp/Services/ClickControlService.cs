@@ -180,7 +180,10 @@ internal sealed class ClickControlService
             frame.Height,
             frame.BgraStride,
             ScreenIdentifier.FromCatalog(screens),
-            requiredScreenId: control.ScreenId);
+            requiredScreenId: control.ScreenId,
+            loadNominatedControls: screenId => ScreenIdentifier.ControlsFrom(
+                _catalog.LoadScreenControls(appKey, screenId)),
+            cancellationToken: cancellationToken);
 
         if (identified.Status != ScreenIdentifyStatus.Identified
             || !string.Equals(identified.ScreenId, control.ScreenId, StringComparison.Ordinal))
@@ -198,7 +201,7 @@ internal sealed class ClickControlService
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        var match = MatchControl(frame, control);
+        var match = MatchControl(frame, control, cancellationToken);
         if (match.Status != TemplateMatchStatus.Found)
         {
             throw new ComputerUseException(
@@ -241,7 +244,10 @@ internal sealed class ClickControlService
         };
     }
 
-    private TemplateMatchResult MatchControl(FrameRecord frame, CatalogControl control)
+    private TemplateMatchResult MatchControl(
+        FrameRecord frame,
+        CatalogControl control,
+        CancellationToken cancellationToken)
     {
         var templateStride = checked(control.Width * 4);
         if (control.Width <= 0
@@ -256,25 +262,32 @@ internal sealed class ClickControlService
         var roi = ExpandRoi(box.X, box.Y, box.Width, box.Height, frame.Width, frame.Height);
         var roiIsFullFrame = roi.X == 0 && roi.Y == 0 && roi.Width == frame.Width && roi.Height == frame.Height;
         var roiLargeEnough = roi.Width >= control.Width && roi.Height >= control.Height;
+        var skipFullFrame = ZnccMatcher.ShouldSkipFullFrameFallback(
+            control.Width, control.Height, frame.Width, frame.Height);
 
         if (roiLargeEnough)
         {
-            var roiMatch = MatchHaystack(frame, roi, control, templateStride);
+            var roiMatch = MatchHaystack(frame, roi, control, templateStride, cancellationToken);
             if (roiMatch.Status == TemplateMatchStatus.Found)
                 return Offset(roiMatch, roi.X, roi.Y);
-            if (roiIsFullFrame)
+            if (roiIsFullFrame || skipFullFrame)
                 return roiMatch;
+        }
+        else if (skipFullFrame)
+        {
+            return new TemplateMatchResult(TemplateMatchStatus.NotFound, 0, 0, 0, 0, 0, 0);
         }
 
         var full = new SearchRect(0, 0, frame.Width, frame.Height);
-        return MatchHaystack(frame, full, control, templateStride);
+        return MatchHaystack(frame, full, control, templateStride, cancellationToken);
     }
 
     private TemplateMatchResult MatchHaystack(
         FrameRecord frame,
         SearchRect roi,
         CatalogControl control,
-        int templateStride)
+        int templateStride,
+        CancellationToken cancellationToken)
     {
         byte[] haystack;
         int hayWidth;
@@ -300,12 +313,13 @@ internal sealed class ClickControlService
             hayWidth,
             hayHeight,
             hayStride,
-            control.Bgra,
+            control.Bgra!,
             control.Width,
             control.Height,
             templateStride,
             _limits.TemplateScaleMin,
-            _limits.TemplateScaleMax);
+            _limits.TemplateScaleMax,
+            cancellationToken);
     }
 
     private async Task<FrameRecord> CaptureLiveFrameAsync(

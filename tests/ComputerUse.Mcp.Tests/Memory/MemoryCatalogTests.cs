@@ -1,6 +1,8 @@
+using ComputerUse.Mcp.Capture;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Identity;
 using ComputerUse.Mcp.Memory;
+using ComputerUse.Mcp.Tests.Support;
 
 namespace ComputerUse.Mcp.Tests.Memory;
 
@@ -162,4 +164,105 @@ public sealed class MemoryCatalogTests : IDisposable
         Assert.Single(dirsB);
         Assert.Equal(Path.GetFileName(dirsA[0]), Path.GetFileName(dirsB[0]));
     }
+
+    [Fact]
+    public void LoadAppScreens_DoesNotDecodeControlPixels()
+    {
+        var catalog = new MemoryCatalog(_root, Limits.V1);
+        var png = TinyPng();
+        var screenId = catalog.PutScreen("app.a", "home", [Fp(png)], Snap());
+        var controlId = catalog.PutControl("app.a", screenId, "go", Ctrl(png));
+
+        var loaded = catalog.LoadAppScreens("app.a");
+        Assert.Contains(loaded, s => s.ScreenId == screenId);
+        Assert.Contains(loaded.SelectMany(s => s.Controls), c => c.ControlId == controlId && c.Bgra is null);
+
+        Assert.True(catalog.TryLoadControl("app.a", controlId, out var control));
+        Assert.NotNull(control.Bgra);
+        Assert.Contains(catalog.LoadScreenControls("app.a", screenId), c => c.Bgra is not null);
+    }
+
+    [Fact]
+    public void LoadAppScreens_NominatesWithoutMissingPeerControlPng()
+    {
+        var catalog = new MemoryCatalog(_root, Limits.V1);
+        var png = TinyPng();
+        var screenA = catalog.PutScreen("app.a", "a", [Fp(png)], Snap(bits: 1));
+        catalog.PutControl("app.a", screenA, "go-a", Ctrl(png));
+        var screenB = catalog.PutScreen("app.a", "b", [Fp(png)], Snap(bits: 2));
+        var controlB = catalog.PutControl("app.a", screenB, "go-b", Ctrl(png));
+
+        var pngB = Directory.GetFiles(_root, controlB + ".png", SearchOption.AllDirectories).Single();
+        File.Delete(pngB);
+
+        var loaded = catalog.LoadAppScreens("app.a");
+        Assert.Equal(2, loaded.Count);
+        Assert.All(loaded.SelectMany(s => s.Controls), c => Assert.Null(c.Bgra));
+        Assert.Contains(loaded, s => s.ScreenId == screenA && s.Fingerprints.Count == 1);
+        Assert.Contains(loaded, s => s.ScreenId == screenB && s.Fingerprints.Count == 1);
+
+        var hydratedB = catalog.LoadScreenControls("app.a", screenB);
+        Assert.Contains(hydratedB, c => c.ControlId == controlB && c.Bgra is null);
+    }
+
+    [Fact]
+    public void LibraryQuota_UsesRunningCounterNotFullRescan()
+    {
+        var png = TinyPng();
+        var limits = Limits.V1 with { MaxMemoryLibraryBytes = 80_000 };
+        var catalog = new MemoryCatalog(_root, limits);
+        var screenId = catalog.PutScreen("app.a", "home", [Fp(png)], Snap());
+        catalog.PutControl("app.a", screenId, "a", Ctrl(png));
+
+        File.WriteAllBytes(Path.Combine(_root, "noise.bin"), new byte[1024 * 1024]);
+
+        var second = catalog.PutControl("app.a", screenId, "b", Ctrl(png));
+        Assert.False(string.IsNullOrWhiteSpace(second));
+    }
+
+    [Fact]
+    public void LibraryQuota_RejectsWhenRunningCounterExceedsLimit()
+    {
+        var png = TinyPng();
+        var limits = Limits.V1 with { MaxMemoryLibraryBytes = png.Length };
+        var catalog = new MemoryCatalog(_root, limits);
+        var ex = Assert.Throws<ComputerUseException>(() =>
+            catalog.PutScreen("app.a", "home", [Fp(png)], Snap()));
+        Assert.Equal(ErrorCodes.PayloadTooLarge, ex.Code);
+    }
+
+    [Fact]
+    public void ForgetScreen_FreesRunningCounter()
+    {
+        var png = TinyPng();
+        var measureRoot = Path.Combine(_root, "m");
+        var measure = new MemoryCatalog(measureRoot, Limits.V1);
+        measure.PutScreen("app.a", "home", [Fp(png)], Snap());
+        var used = Directory.EnumerateFiles(measureRoot, "*", SearchOption.AllDirectories)
+            .Sum(f => new FileInfo(f).Length);
+
+        var limits = Limits.V1 with { MaxMemoryLibraryBytes = (int)used + png.Length / 2 };
+        var liveRoot = Path.Combine(_root, "c");
+        var catalog = new MemoryCatalog(liveRoot, limits);
+        var screenId = catalog.PutScreen("app.a", "home", [Fp(png)], Snap());
+        var overflow = Assert.Throws<ComputerUseException>(() =>
+            catalog.PutScreen("app.a", "other", [Fp(png)], Snap()));
+        Assert.Equal(ErrorCodes.PayloadTooLarge, overflow.Code);
+
+        catalog.ForgetScreen("app.a", screenId);
+        var again = catalog.PutScreen("app.a", "other", [Fp(png)], Snap());
+        Assert.False(string.IsNullOrWhiteSpace(again));
+    }
+
+    private static byte[] TinyPng() =>
+        PngCodec.EncodeBgra(BgraFrames.Checker(24, 24, 2), 24, 24, 96);
+
+    private static FingerprintAsset Fp(byte[] png) =>
+        new(0, 0, 24, 24, png, 0, 0, 0.1, 0.1);
+
+    private static ControlAsset Ctrl(byte[] png) =>
+        new(png, 24, 24, 0.1, 0.1, 0.2, 0.2, 100, 100, 96, 96);
+
+    private static ScreenSnapshot Snap(ulong bits = 1) =>
+        new(100, 100, 100, 100, 96, 96, bits);
 }

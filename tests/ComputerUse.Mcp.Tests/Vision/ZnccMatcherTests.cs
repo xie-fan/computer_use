@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Tests.Support;
 using ComputerUse.Mcp.Vision;
@@ -68,6 +69,36 @@ public sealed class ZnccMatcherTests
             maxScale: 2.2);
 
         Assert.Equal(TemplateMatchStatus.ScaleMismatch, result.Status);
+    }
+
+    [Fact]
+    public void CancelledToken_ReturnsNotFoundQuickly()
+    {
+        var hay = BgraFrames.Solid(1280, 720, 0, 0, 0);
+        var tmpl = BgraFrames.Checker(64, 64, cell: 2);
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var sw = Stopwatch.StartNew();
+        var result = ZnccMatcher.Match(
+            hay, 1280, 720, 1280 * 4,
+            tmpl, 64, 64, 64 * 4,
+            Limits.V1.TemplateScaleMin,
+            Limits.V1.TemplateScaleMax,
+            cts.Token);
+        sw.Stop();
+
+        Assert.Equal(TemplateMatchStatus.NotFound, result.Status);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), sw.Elapsed.ToString());
+    }
+
+    [Fact]
+    public void LargeTemplateOnHdHaystack_SkipsFullFrameFallback()
+    {
+        Assert.True(ZnccMatcher.ShouldSkipFullFrameFallback(64, 64, 1280, 720));
+        Assert.False(ZnccMatcher.ShouldSkipFullFrameFallback(32, 32, 1280, 720));
+        Assert.False(ZnccMatcher.ShouldSkipFullFrameFallback(64, 64, 100, 80));
+        Assert.False(ZnccMatcher.ShouldSkipFullFrameFallback(12, 12, 48, 48));
     }
 
     private static void Paste(byte[] dest, int destW, byte[] src, int srcW, int srcH, int x, int y)

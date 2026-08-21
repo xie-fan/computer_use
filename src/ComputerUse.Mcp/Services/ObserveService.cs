@@ -141,7 +141,7 @@ internal sealed class ObserveService
                 };
             }
 
-            return RecognizeScreen(token, fitted.Bgra, fitted.Width, fitted.Height, frameId);
+            return RecognizeScreen(token, fitted.Bgra, fitted.Width, fitted.Height, frameId, cancellationToken);
         }
         catch (ComputerUseException ex)
         {
@@ -160,7 +160,8 @@ internal sealed class ObserveService
         byte[] frameBgra,
         int width,
         int height,
-        string frameId)
+        string frameId,
+        CancellationToken cancellationToken)
     {
         var appKey = _identities.Resolve(token.Pid, token.CreateTimeUtc, token.ClassName);
 
@@ -170,7 +171,10 @@ internal sealed class ObserveService
             width,
             height,
             width * 4,
-            ScreenIdentifier.FromCatalog(assets));
+            ScreenIdentifier.FromCatalog(assets),
+            loadNominatedControls: screenId => ScreenIdentifier.ControlsFrom(
+                _catalog.LoadScreenControls(appKey.Value, screenId)),
+            cancellationToken: cancellationToken);
 
         if (identified.Status == ScreenIdentifyStatus.Ambiguous)
         {

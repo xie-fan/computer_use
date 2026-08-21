@@ -39,7 +39,7 @@ internal sealed record CatalogControl(
     double Nh,
     int Width,
     int Height,
-    byte[] Bgra,
+    byte[]? Bgra,
     int SourceWidth,
     int SourceHeight,
     uint DpiX,
@@ -105,6 +105,8 @@ internal sealed class MemoryCatalog
     private readonly string _root;
     private readonly Limits _limits;
     private readonly object _gate = new();
+    private long _usedBytes;
+    private bool _usedBytesTrusted;
 
     public static string DefaultRootDirectory =>
         Path.Combine(
@@ -119,6 +121,7 @@ internal sealed class MemoryCatalog
         _root = Path.GetFullPath(rootDirectory);
         _limits = limits;
         Directory.CreateDirectory(_root);
+        RecalibrateUsedBytes();
     }
 
     public string PutScreen(string appKey, string screenKey, int fingerprintCount, AppIdentity? diagnostics = null)
@@ -149,8 +152,9 @@ internal sealed class MemoryCatalog
             }
 
             Directory.CreateDirectory(screenDir);
+            var jsonPath = Path.Combine(screenDir, ScreenFileName);
             WriteJson(
-                Path.Combine(screenDir, ScreenFileName),
+                jsonPath,
                 new StoredScreen
                 {
                     ScreenId = screenId,
@@ -158,6 +162,7 @@ internal sealed class MemoryCatalog
                     FingerprintCount = fingerprintCount,
                     CreatedAt = DateTimeOffset.UtcNow
                 });
+            AccountWritten(jsonPath);
             return screenId;
         }
     }
@@ -206,7 +211,9 @@ internal sealed class MemoryCatalog
                 var asset = fingerprints[i];
                 ArgumentNullException.ThrowIfNull(asset.Png);
                 var fileName = i + ".png";
-                File.WriteAllBytes(Path.Combine(fingerprintDir, fileName), asset.Png);
+                var pngPath = Path.Combine(fingerprintDir, fileName);
+                File.WriteAllBytes(pngPath, asset.Png);
+                AccountWritten(pngPath);
                 metas.Add(new StoredFingerprintMeta
                 {
                     Index = i,
@@ -222,8 +229,9 @@ internal sealed class MemoryCatalog
                 });
             }
 
+            var screenJson = Path.Combine(screenDir, ScreenFileName);
             WriteJson(
-                Path.Combine(screenDir, ScreenFileName),
+                screenJson,
                 new StoredScreen
                 {
                     ScreenId = screenId,
@@ -239,6 +247,7 @@ internal sealed class MemoryCatalog
                     PhashHex = snapshot.PhashBits.ToString("X16"),
                     Fingerprints = metas
                 });
+            AccountWritten(screenJson);
             return screenId;
         }
     }
@@ -271,14 +280,16 @@ internal sealed class MemoryCatalog
             var controlId = "ct1." + Guid.NewGuid().ToString("N");
             var controlsDir = Path.Combine(screenDir, ControlsFolder);
             Directory.CreateDirectory(controlsDir);
+            var jsonPath = Path.Combine(controlsDir, controlId + ".json");
             WriteJson(
-                Path.Combine(controlsDir, controlId + ".json"),
+                jsonPath,
                 new StoredControl
                 {
                     ControlId = controlId,
                     Name = name,
                     CreatedAt = DateTimeOffset.UtcNow
                 });
+            AccountWritten(jsonPath);
             return controlId;
         }
     }
@@ -315,9 +326,12 @@ internal sealed class MemoryCatalog
             var controlsDir = Path.Combine(screenDir, ControlsFolder);
             Directory.CreateDirectory(controlsDir);
             var pngName = controlId + ".png";
-            File.WriteAllBytes(Path.Combine(controlsDir, pngName), asset.Png);
+            var pngPath = Path.Combine(controlsDir, pngName);
+            File.WriteAllBytes(pngPath, asset.Png);
+            AccountWritten(pngPath);
+            var jsonPath = Path.Combine(controlsDir, controlId + ".json");
             WriteJson(
-                Path.Combine(controlsDir, controlId + ".json"),
+                jsonPath,
                 new StoredControl
                 {
                     ControlId = controlId,
@@ -335,6 +349,7 @@ internal sealed class MemoryCatalog
                     DpiY = asset.DpiY,
                     TemplateFile = pngName
                 });
+            AccountWritten(jsonPath);
             return controlId;
         }
     }
@@ -360,31 +375,7 @@ internal sealed class MemoryCatalog
                 return [];
 
             var stored = ReadJson<StoredScreen>(Path.Combine(screenDir, ScreenFileName));
-            if (stored?.Fingerprints is null || stored.Fingerprints.Count == 0)
-                return [];
-
-            var loaded = new List<CatalogFingerprint>(stored.Fingerprints.Count);
-            var fingerprintDir = Path.Combine(screenDir, FingerprintsFolder);
-            foreach (var meta in stored.Fingerprints)
-            {
-                if (!IsSafeFileName(meta.File))
-                    continue;
-                var path = Path.Combine(fingerprintDir, meta.File);
-                if (!TryDecodePng(path, out var bgra, out var width, out var height))
-                    continue;
-                loaded.Add(new CatalogFingerprint(
-                    meta.X,
-                    meta.Y,
-                    width,
-                    height,
-                    meta.Nx,
-                    meta.Ny,
-                    meta.Nw,
-                    meta.Nh,
-                    bgra));
-            }
-
-            return loaded;
+            return ReadFingerprintsUnlocked(screenDir, stored);
         }
     }
 
@@ -478,30 +469,43 @@ internal sealed class MemoryCatalog
         ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
         lock (_gate)
         {
-            var listed = List(appKey);
-            if (listed.Count == 0)
+            var screensDir = Path.Combine(GetAppDirectory(appKey), ScreensFolder);
+            if (!Directory.Exists(screensDir))
                 return [];
 
-            var loaded = new List<CatalogScreenAssets>(listed.Count);
-            foreach (var screen in listed)
+            var loaded = new List<CatalogScreenAssets>();
+            foreach (var screenDir in Directory.GetDirectories(screensDir))
             {
-                var fingerprints = LoadFingerprints(appKey, screen.ScreenId);
-                var controls = new List<CatalogControl>(screen.Controls.Count);
-                foreach (var remembered in screen.Controls)
-                {
-                    if (TryLoadControl(appKey, remembered.ControlId, out var control))
-                        controls.Add(control);
-                }
+                var stored = ReadJson<StoredScreen>(Path.Combine(screenDir, ScreenFileName));
+                if (stored is null)
+                    continue;
 
                 loaded.Add(new CatalogScreenAssets(
-                    screen.ScreenId,
-                    screen.ScreenKey,
-                    ReadPhashBits(appKey, screen.ScreenId),
-                    fingerprints,
-                    controls));
+                    stored.ScreenId,
+                    stored.ScreenKey,
+                    ParsePhash(stored.PhashHex),
+                    ReadFingerprintsUnlocked(screenDir, stored),
+                    ReadControlLayoutsUnlocked(screenDir, stored.ScreenId, decodePixels: false)));
             }
 
             return loaded;
+        }
+    }
+
+    public IReadOnlyList<CatalogControl> LoadScreenControls(string appKey, string screenId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(screenId);
+        lock (_gate)
+        {
+            if (!TryResolveScreenDirectory(GetAppDirectory(appKey), screenId, out var screenDir))
+                return [];
+
+            var stored = ReadJson<StoredScreen>(Path.Combine(screenDir, ScreenFileName));
+            if (stored is null)
+                return [];
+
+            return ReadControlLayoutsUnlocked(screenDir, stored.ScreenId, decodePixels: true);
         }
     }
 
@@ -516,7 +520,11 @@ internal sealed class MemoryCatalog
                 return;
 
             if (Directory.Exists(screenDir))
+            {
+                var size = DirectorySize(screenDir);
                 Directory.Delete(screenDir, recursive: true);
+                AccountRemoved(size);
+            }
         }
     }
 
@@ -547,14 +555,18 @@ internal sealed class MemoryCatalog
                 var pngName = stored is not null && !string.IsNullOrWhiteSpace(stored.TemplateFile)
                     ? stored.TemplateFile
                     : controlId + ".png";
+                long removed = 0;
                 if (IsSafeFileName(pngName)
                     && TryResolveContainedLeaf(controlsDir, pngName, out var pngPath)
                     && File.Exists(pngPath))
                 {
+                    removed += FileLength(pngPath);
                     File.Delete(pngPath);
                 }
 
+                removed += FileLength(jsonPath);
                 File.Delete(jsonPath);
+                AccountRemoved(removed);
                 return;
             }
         }
@@ -588,7 +600,10 @@ internal sealed class MemoryCatalog
         Directory.CreateDirectory(appDir);
         var appFile = Path.Combine(appDir, AppFileName);
         if (!File.Exists(appFile))
+        {
             WriteJson(appFile, ToStoredApp(appKey, diagnostics));
+            AccountWritten(appFile);
+        }
         return appDir;
     }
 
@@ -683,19 +698,94 @@ internal sealed class MemoryCatalog
         return Directory.Exists(controlsDir) ? Directory.GetFiles(controlsDir, "*.json").Length : 0;
     }
 
-    private ulong ReadPhashBits(string appKey, string screenId)
+    private static IReadOnlyList<CatalogFingerprint> ReadFingerprintsUnlocked(
+        string screenDir,
+        StoredScreen? stored)
     {
-        if (!TryResolveScreenDirectory(GetAppDirectory(appKey), screenId, out var screenDir))
-            return 0;
+        if (stored?.Fingerprints is null || stored.Fingerprints.Count == 0)
+            return [];
 
-        var stored = ReadJson<StoredScreen>(Path.Combine(screenDir, ScreenFileName));
-        if (stored?.PhashHex is null)
-            return 0;
+        var loaded = new List<CatalogFingerprint>(stored.Fingerprints.Count);
+        var fingerprintDir = Path.Combine(screenDir, FingerprintsFolder);
+        foreach (var meta in stored.Fingerprints)
+        {
+            if (!IsSafeFileName(meta.File))
+                continue;
+            var path = Path.Combine(fingerprintDir, meta.File);
+            if (!TryDecodePng(path, out var bgra, out var width, out var height))
+                continue;
+            loaded.Add(new CatalogFingerprint(
+                meta.X,
+                meta.Y,
+                width,
+                height,
+                meta.Nx,
+                meta.Ny,
+                meta.Nw,
+                meta.Nh,
+                bgra));
+        }
 
-        return ulong.TryParse(stored.PhashHex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var bits)
+        return loaded;
+    }
+
+    private static IReadOnlyList<CatalogControl> ReadControlLayoutsUnlocked(
+        string screenDir,
+        string screenId,
+        bool decodePixels)
+    {
+        var controlsDir = Path.Combine(screenDir, ControlsFolder);
+        if (!Directory.Exists(controlsDir))
+            return [];
+
+        var controls = new List<CatalogControl>();
+        foreach (var file in Directory.GetFiles(controlsDir, "*.json"))
+        {
+            var stored = ReadJson<StoredControl>(file);
+            if (stored is null)
+                continue;
+
+            byte[]? bgra = null;
+            var width = stored.Width;
+            var height = stored.Height;
+            if (decodePixels)
+            {
+                var pngName = string.IsNullOrWhiteSpace(stored.TemplateFile)
+                    ? stored.ControlId + ".png"
+                    : stored.TemplateFile;
+                if (IsSafeFileName(pngName)
+                    && TryDecodePng(Path.Combine(controlsDir, pngName), out var decoded, out var w, out var h))
+                {
+                    bgra = decoded;
+                    width = w;
+                    height = h;
+                }
+            }
+
+            controls.Add(new CatalogControl(
+                stored.ControlId,
+                stored.Name,
+                screenId,
+                stored.Nx,
+                stored.Ny,
+                stored.Nw,
+                stored.Nh,
+                width,
+                height,
+                bgra,
+                stored.SourceWidth,
+                stored.SourceHeight,
+                stored.DpiX,
+                stored.DpiY));
+        }
+
+        return controls;
+    }
+
+    private static ulong ParsePhash(string? hex) =>
+        hex is not null && ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var bits)
             ? bits
             : 0;
-    }
 
     private static IReadOnlyList<RememberedControl> ReadControls(string screenDir)
     {
@@ -717,12 +807,55 @@ internal sealed class MemoryCatalog
 
     private void EnsureLibraryQuota(long additionalBytes = 0)
     {
-        if (DirectorySize(_root) + additionalBytes >= _limits.MaxMemoryLibraryBytes)
+        if (!_usedBytesTrusted)
+            RecalibrateUsedBytes();
+
+        if (_usedBytes + additionalBytes >= _limits.MaxMemoryLibraryBytes)
         {
             throw new ComputerUseException(
                 ErrorCodes.PayloadTooLarge,
                 "The memory library exceeds maxMemoryLibraryBytes.",
                 new { maxMemoryLibraryBytes = _limits.MaxMemoryLibraryBytes });
+        }
+    }
+
+    private void RecalibrateUsedBytes()
+    {
+        _usedBytes = DirectorySize(_root);
+        _usedBytesTrusted = true;
+    }
+
+    private void AccountWritten(string path)
+    {
+        try
+        {
+            _usedBytes += FileLength(path);
+        }
+        catch (IOException)
+        {
+            _usedBytesTrusted = false;
+        }
+    }
+
+    private void AccountRemoved(long bytes)
+    {
+        _usedBytes -= bytes;
+        if (_usedBytes < 0)
+        {
+            _usedBytes = 0;
+            _usedBytesTrusted = false;
+        }
+    }
+
+    private static long FileLength(string path)
+    {
+        try
+        {
+            return File.Exists(path) ? new FileInfo(path).Length : 0;
+        }
+        catch (IOException)
+        {
+            return 0;
         }
     }
 
