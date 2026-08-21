@@ -100,6 +100,69 @@ public sealed class ClickControlServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SuccessfulClick_WritesLastMatchedAtVisibleToList()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var frame = ScreenFrame(seed: 3);
+        env.Frames.Add(frame);
+        var screenId = remember.RememberScreen(frame, AppKeyValue, "home", Spread(), hostWindow: false);
+        var controlId = remember.RememberControl(frame, AppKeyValue, screenId, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+
+        Assert.Null(Assert.Single(env.Catalog.List(AppKeyValue)).LastMatchedAt);
+        Assert.Null(Assert.Single(Assert.Single(env.Catalog.List(AppKeyValue)).Controls).LastMatchedAt);
+
+        var live = ScreenFrame(seed: 3, frameId: "fr1.live", visualized: false);
+        env.Frames.Add(live);
+        env.Capture.Pixels = live.Bgra!;
+        env.Capture.Width = live.Width;
+        env.Capture.Height = live.Height;
+
+        await env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
+
+        var listed = env.Catalog.List(AppKeyValue);
+        var screen = Assert.Single(listed);
+        Assert.Equal(screenId, screen.ScreenId);
+        Assert.NotNull(screen.LastMatchedAt);
+        var control = Assert.Single(screen.Controls);
+        Assert.Equal(controlId, control.ControlId);
+        Assert.NotNull(control.LastMatchedAt);
+
+        var payload = new ListRememberedResult
+        {
+            Screens = listed,
+            Controls = listed.SelectMany(s => s.Controls).ToList()
+        };
+        using var doc = JsonDocument.Parse(ToolResults.SerializeStructured(payload).GetRawText());
+        Assert.True(doc.RootElement.GetProperty("screens")[0].TryGetProperty("lastMatchedAt", out var screenMatched));
+        Assert.False(string.IsNullOrWhiteSpace(screenMatched.GetString()));
+        Assert.True(doc.RootElement.GetProperty("controls")[0].TryGetProperty("lastMatchedAt", out var controlMatched));
+        Assert.False(string.IsNullOrWhiteSpace(controlMatched.GetString()));
+    }
+
+    [Fact]
+    public async Task FailedClick_DoesNotWriteLastMatchedAt()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var frameA = ScreenFrame(seed: 3);
+        env.Frames.Add(frameA);
+        var screenA = remember.RememberScreen(frameA, AppKeyValue, "a", Spread(), hostWindow: false);
+        var controlId = remember.RememberControl(frameA, AppKeyValue, screenA, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+
+        var frameB = ScreenFrame(seed: 91, frameId: "fr1.b", visualized: false);
+        PrimeCapture(env, frameB);
+
+        var ex = await Assert.ThrowsAsync<ComputerUseException>(() =>
+            env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None));
+        Assert.Equal(ErrorCodes.ScreenMismatch, ex.Code);
+
+        var listed = env.Catalog.List(AppKeyValue);
+        Assert.Null(Assert.Single(listed).LastMatchedAt);
+        Assert.Null(Assert.Single(Assert.Single(listed).Controls).LastMatchedAt);
+    }
+
+    [Fact]
     public async Task ObserveFrameScreenA_LiveCaptureScreenB_IsScreenMismatch()
     {
         var env = Create(host: false);

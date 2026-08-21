@@ -50,7 +50,7 @@ HostWindow（`isHostWindow: true`）：允许 `list_windows`、`screenshot_windo
 - **禁止**用标题栏可变文字当指纹。禁止用会滚动的列表内容区、会闪的动画区、空白 / 纯色。
 - 每块 **必须** ≥ 24×24。熵过低会被 `low_entropy_crop` 拒绝；必须换更高熵的框，禁止原框重试充数。
 
-`remember_control` 的框同样必须 ≥ 24×24、高熵、相对该可视化 Frame。
+`remember_control` 的框同样必须 ≥ 24×24、高熵、相对该可视化 Frame。同名 `remember_control` 覆盖该 Screen 下已有模板并返回原 `controlId`，不新增条目。
 
 ## 无 controlMemory 的循环（旧循环，必须完整保留）
 

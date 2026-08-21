@@ -3,6 +3,7 @@ using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Identity;
 using ComputerUse.Mcp.Memory;
 using ComputerUse.Mcp.Tests.Support;
+using System.Text.Json;
 
 namespace ComputerUse.Mcp.Tests.Memory;
 
@@ -252,6 +253,129 @@ public sealed class MemoryCatalogTests : IDisposable
         catalog.ForgetScreen("app.a", screenId);
         var again = catalog.PutScreen("app.a", "other", [Fp(png)], Snap());
         Assert.False(string.IsNullOrWhiteSpace(again));
+    }
+
+    [Fact]
+    public void RememberAfterSoftTtl_EvictsUnmatchedScreen()
+    {
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var catalog = new MemoryCatalog(_root, Limits.V1, () => now);
+        var oldId = catalog.PutScreen("app.a", "old", 2);
+        Assert.Contains(catalog.List("app.a"), s => s.ScreenId == oldId);
+
+        now = now.AddDays(31);
+        Assert.Contains(catalog.List("app.a"), s => s.ScreenId == oldId);
+
+        var newId = catalog.PutScreen("app.a", "new", 2);
+        var listed = catalog.List("app.a");
+        Assert.DoesNotContain(listed, s => s.ScreenId == oldId);
+        Assert.Contains(listed, s => s.ScreenId == newId);
+    }
+
+    [Fact]
+    public void SoftTtl_UsesLastMatchedAtNotCreatedAt()
+    {
+        var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var catalog = new MemoryCatalog(_root, Limits.V1, () => now);
+        var png = TinyPng();
+        var kept = catalog.PutScreen("app.a", "kept", [Fp(png)], Snap(bits: 1));
+        var dropped = catalog.PutScreen("app.a", "dropped", [Fp(png)], Snap(bits: 2));
+        var controlId = catalog.PutControl("app.a", kept, "go", Ctrl(png));
+
+        now = now.AddDays(2);
+        catalog.TouchMatch("app.a", kept, controlId);
+        now = now.AddDays(29);
+
+        catalog.PutScreen("app.a", "fresh", 2);
+        var listed = catalog.List("app.a");
+        Assert.Contains(listed, s => s.ScreenId == kept);
+        Assert.DoesNotContain(listed, s => s.ScreenId == dropped);
+    }
+
+    [Fact]
+    public void PutControl_SameName_OverwritesAndKeepsId()
+    {
+        var png = TinyPng();
+        var catalog = new MemoryCatalog(_root, Limits.V1);
+        var screenId = catalog.PutScreen("app.a", "home", [Fp(png)], Snap());
+        var first = catalog.PutControl("app.a", screenId, "go", Ctrl(png));
+        var second = catalog.PutControl("app.a", screenId, "go", Ctrl(png));
+        Assert.Equal(first, second);
+        var listed = catalog.List("app.a");
+        Assert.Single(listed);
+        Assert.Single(listed[0].Controls);
+        Assert.Equal(first, listed[0].Controls[0].ControlId);
+    }
+
+    [Fact]
+    public void PutControl_SameName_DoesNotConsumeControlQuota()
+    {
+        var limits = Limits.V1 with { MaxControlsPerScreen = 1 };
+        var catalog = new MemoryCatalog(_root, limits);
+        var screenId = catalog.PutScreen("app.a", "home", 2);
+        var first = catalog.PutControl("app.a", screenId, "go");
+        var again = catalog.PutControl("app.a", screenId, "go");
+        Assert.Equal(first, again);
+        Assert.ThrowsAny<Exception>(() => catalog.PutControl("app.a", screenId, "other"));
+        Assert.Single(Assert.Single(catalog.List("app.a")).Controls);
+    }
+
+    [Fact]
+    public async Task ParallelPutScreen_SameRoot_JsonReadableAndWithinQuota()
+    {
+        var png = TinyPng();
+        var limits = Limits.V1 with { MaxScreensPerAppKey = 1 };
+        var catA = new MemoryCatalog(_root, limits);
+        var catB = new MemoryCatalog(_root, limits);
+        Exception? exA = null;
+        Exception? exB = null;
+        await Task.WhenAll(
+            Task.Run(() =>
+            {
+                try
+                {
+                    catA.PutScreen("app.a", "s1", [Fp(png)], Snap(bits: 1));
+                }
+                catch (Exception ex)
+                {
+                    exA = ex;
+                }
+            }),
+            Task.Run(() =>
+            {
+                try
+                {
+                    catB.PutScreen("app.a", "s2", [Fp(png)], Snap(bits: 2));
+                }
+                catch (Exception ex)
+                {
+                    exB = ex;
+                }
+            }));
+
+        Assert.True((exA is null) ^ (exB is null));
+        var failed = (exA ?? exB) as ComputerUseException;
+        Assert.NotNull(failed);
+        Assert.Equal(ErrorCodes.PayloadTooLarge, failed!.Code);
+
+        foreach (var json in Directory.GetFiles(_root, "screen.json", SearchOption.AllDirectories))
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(json));
+            Assert.Equal(JsonValueKind.Object, doc.RootElement.ValueKind);
+            Assert.True(doc.RootElement.TryGetProperty("screenId", out _));
+            Assert.True(doc.RootElement.TryGetProperty("fingerprints", out var fingerprints));
+            Assert.True(fingerprints.GetArrayLength() >= 1);
+        }
+
+        Assert.Single(new MemoryCatalog(_root, limits).List("app.a"));
+    }
+
+    [Fact]
+    public void CreatesMemoryRootDirectory()
+    {
+        var catalog = new MemoryCatalog(_root, Limits.V1);
+        Assert.True(Directory.Exists(_root));
+        Assert.NotNull(catalog);
     }
 
     private static byte[] TinyPng() =>

@@ -228,6 +228,15 @@ internal sealed class ClickControlService
         tracker.MouseDown(MouseButtonKind.Left);
         tracker.MouseUp(MouseButtonKind.Left);
 
+        try
+        {
+            _catalog.TouchMatch(appKey, control.ScreenId, control.ControlId);
+        }
+        catch (Exception ex) when (ex is ComputerUseException or IOException)
+        {
+            // SendInput 已发生；时间戳失败不得把成功点击改成 isError。
+        }
+
         return new ClickControlResult
         {
             ControlId = control.ControlId,

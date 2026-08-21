@@ -80,6 +80,20 @@ public sealed class RememberServiceTests : IDisposable
     }
 
     [Fact]
+    public void SameControlName_OverwritesTemplate()
+    {
+        var bgra = UniqueFrame(400, 400);
+        var frame = TestFrames.Create(400, 400, bgra);
+        var screenId = _remember.RememberScreen(frame, "app.a", "home", SpreadBoxes(400), hostWindow: false);
+        var first = _remember.RememberControl(
+            frame, "app.a", screenId, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+        var second = _remember.RememberControl(
+            frame, "app.a", screenId, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+        Assert.Equal(first, second);
+        Assert.Single(_catalog.List("app.a").SelectMany(s => s.Controls));
+    }
+
+    [Fact]
     public void LowEntropyBox_IsLowEntropyCrop()
     {
         var bgra = BgraFrames.Solid(400, 400, 40, 40, 40);
