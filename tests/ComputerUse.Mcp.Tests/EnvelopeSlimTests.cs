@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Mcp;
+using ComputerUse.Mcp.Services;
 
 namespace ComputerUse.Mcp.Tests;
 
@@ -83,6 +84,62 @@ public sealed class EnvelopeSlimTests
     }
 
     [Fact]
+    public void ToolResultsError_ScreenAmbiguous_IsErrorWithCandidates()
+    {
+        var ex = new ComputerUseException(
+            ErrorCodes.ScreenAmbiguous,
+            "Multiple remembered screens match the current frame equally well.",
+            new { candidates = new[] { "scr.a", "scr.b" } });
+        var result = ToolResults.Error(ex);
+        Assert.True(result.IsError);
+        using var doc = JsonDocument.Parse(result.StructuredContent!.Value.GetRawText());
+        Assert.Equal("screen_ambiguous", doc.RootElement.GetProperty("code").GetString());
+        var candidates = doc.RootElement.GetProperty("details").GetProperty("candidates");
+        Assert.Equal(2, candidates.GetArrayLength());
+        Assert.Equal("scr.a", candidates[0].GetString());
+    }
+
+    [Fact]
+    public void ToolResultsOk_ClickControlResult_UsesSourceGen()
+    {
+        var payload = new ClickControlResult
+        {
+            ControlId = "ctl.1",
+            ScreenId = "scr.1",
+            FrameId = "fr1.live",
+            Match = new ClickControlMatch
+            {
+                X = 8,
+                Y = 8,
+                Width = 32,
+                Height = 32,
+                Score = 0.91
+            }
+        };
+        var json = ToolResults.SerializeStructured(payload).GetRawText();
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        Assert.Equal("ctl.1", root.GetProperty("controlId").GetString());
+        Assert.Equal("scr.1", root.GetProperty("screenId").GetString());
+        Assert.Equal("fr1.live", root.GetProperty("frameId").GetString());
+        Assert.Equal(8, root.GetProperty("match").GetProperty("x").GetInt32());
+        Assert.Equal(0.91, root.GetProperty("match").GetProperty("score").GetDouble(), 2);
+        Assert.DoesNotContain("ClickControlResult", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ForgetControls_DescriptionRequiresTargetToken()
+    {
+        var src = FindSrc("Mcp/ComputerUseTools.cs");
+        var text = File.ReadAllText(src);
+        Assert.Contains("targetToken is required to resolve the AppKey", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "Provide targetToken and/or screenId/controlId",
+            text,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ListWindows_KeepsFullEnvelope()
     {
         var json = JsonSerializer.SerializeToElement(new
@@ -93,6 +150,20 @@ public sealed class EnvelopeSlimTests
         }, ToolResults.Json);
         Assert.True(json.TryGetProperty("limits", out _));
         Assert.True(json.TryGetProperty("capabilities", out _));
+    }
+
+    private static string FindSrc(string relativeUnderMcp)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, "src", "ComputerUse.Mcp", relativeUnderMcp);
+            if (File.Exists(candidate))
+                return candidate;
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException(relativeUnderMcp);
     }
 
     private static ScreenshotResult SampleScreenshot() => new()

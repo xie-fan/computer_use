@@ -19,6 +19,7 @@ internal static class ToolResults
         RememberControlResult rememberControl => JsonSerializer.SerializeToElement(rememberControl, ComputerUseJsonContext.Default.RememberControlResult),
         ListRememberedResult listed => JsonSerializer.SerializeToElement(listed, ComputerUseJsonContext.Default.ListRememberedResult),
         ForgetControlsResult forgotten => JsonSerializer.SerializeToElement(forgotten, ComputerUseJsonContext.Default.ForgetControlsResult),
+        ClickControlResult clicked => JsonSerializer.SerializeToElement(clicked, ComputerUseJsonContext.Default.ClickControlResult),
         _ => JsonSerializer.SerializeToElement(payload, Json)
     };
 

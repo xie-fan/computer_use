@@ -2,10 +2,12 @@ using ComputerUse.Mcp.Coordination;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Identity;
 using ComputerUse.Mcp.Input;
+using ComputerUse.Mcp.Mcp;
 using ComputerUse.Mcp.Memory;
 using ComputerUse.Mcp.Services;
 using ComputerUse.Mcp.Tests.Fakes;
 using ComputerUse.Mcp.Tests.Support;
+using System.Text.Json;
 
 namespace ComputerUse.Mcp.Tests;
 
@@ -86,9 +88,14 @@ public sealed class ClickControlServiceTests : IDisposable
         env.Capture.Width = live.Width;
         env.Capture.Height = live.Height;
 
-        await env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
+        var clicked = await env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
         Assert.Contains(env.Input.Log, line => line.StartsWith("mouse:Left:down", StringComparison.Ordinal));
         Assert.Contains(env.Input.Log, line => line.StartsWith("mouse:Left:up", StringComparison.Ordinal));
+        var json = ToolResults.SerializeStructured(clicked).GetRawText();
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(controlId, doc.RootElement.GetProperty("controlId").GetString());
+        Assert.Equal(screenId, doc.RootElement.GetProperty("screenId").GetString());
+        Assert.True(doc.RootElement.TryGetProperty("match", out _));
     }
 
     [Fact]

@@ -268,28 +268,19 @@ internal sealed class ComputerUseTools
     }
 
     [McpServerTool(Name = "forget_controls", Title = "Forget controls", ReadOnly = false, Destructive = true, OpenWorld = false)]
-    [Description("Delete remembered screen/control crops from disk. Provide targetToken and/or screenId/controlId. HostWindow is a no-op (not an error).")]
+    [Description("Delete remembered screen/control crops from disk. targetToken is required to resolve the AppKey; optional screenId and/or controlId select what to delete. HostWindow is a no-op (not an error).")]
     public CallToolResult ForgetControls(
-        [Description("Opaque target token from list_windows. Used to resolve AppKey.")] string? targetToken = null,
+        [Description("Required opaque target token from list_windows. Used to resolve the AppKey.")] string? targetToken = null,
         [Description("Optional screen id to delete (including its controls).")] string? screenId = null,
         [Description("Optional control id to delete.")] string? controlId = null)
     {
         try
         {
-            if (string.IsNullOrWhiteSpace(targetToken)
-                && string.IsNullOrWhiteSpace(screenId)
-                && string.IsNullOrWhiteSpace(controlId))
-            {
-                throw new ComputerUseException(
-                    ErrorCodes.InvalidAction,
-                    "forget_controls requires targetToken and/or screenId/controlId.");
-            }
-
             if (string.IsNullOrWhiteSpace(targetToken))
             {
                 throw new ComputerUseException(
                     ErrorCodes.InvalidAction,
-                    "targetToken is required to resolve the AppKey.");
+                    "forget_controls requires targetToken to resolve the AppKey.");
             }
 
             var (_, appKey, hostWindow, _) = ResolveTarget(targetToken);

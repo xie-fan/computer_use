@@ -102,6 +102,7 @@ internal sealed class WindowListService
 
     public object Capabilities() => new
     {
+        controlMemory = true,
         virtualDesktop = new
         {
             membershipQuery = _desktops.MembershipQueryAvailable,

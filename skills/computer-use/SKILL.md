@@ -15,7 +15,7 @@ HostWindow（`isHostWindow: true`）：允许 `list_windows`、`screenshot_windo
 
 ## capabilities.controlMemory
 
-本 Skill 声明 **`capabilities.controlMemory`**。启用记忆循环的判定：`list_windows` 快照含 `capabilities.controlMemory`，或工具列表已暴露 `observe_window` / `click_control` / `remember_screen` / `remember_control`。
+本 Skill 声明 **`capabilities.controlMemory`**。启用记忆循环的判定：`list_windows` 快照里 `capabilities.controlMemory === true`，或工具列表已暴露 `observe_window` / `click_control` / `remember_screen` / `remember_control`。
 
 - **满足任一、且目标不是 HostWindow：必须走「控件记忆循环」。**
 - 两者皆无：必须走「无 controlMemory 的循环」，禁止调用不存在的记忆工具。

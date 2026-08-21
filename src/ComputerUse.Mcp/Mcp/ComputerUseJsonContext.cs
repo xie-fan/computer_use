@@ -27,6 +27,8 @@ namespace ComputerUse.Mcp.Mcp;
 [JsonSerializable(typeof(RememberControlResult))]
 [JsonSerializable(typeof(ListRememberedResult))]
 [JsonSerializable(typeof(ForgetControlsResult))]
+[JsonSerializable(typeof(ClickControlResult))]
+[JsonSerializable(typeof(ClickControlMatch))]
 internal partial class ComputerUseJsonContext : JsonSerializerContext;
 
 internal sealed class RememberScreenResult

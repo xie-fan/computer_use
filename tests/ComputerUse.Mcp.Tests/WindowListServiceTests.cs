@@ -94,6 +94,7 @@ public sealed class WindowListServiceTests
 
         var json = JsonSerializer.SerializeToElement(list.List());
         Assert.Equal(2, json.GetProperty("windows").GetArrayLength());
+        Assert.True(json.GetProperty("capabilities").GetProperty("controlMemory").GetBoolean());
         Assert.Equal(1, world.InfoCallCount);
         Assert.Equal(1, host.RefreshCount);
     }

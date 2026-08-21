@@ -9,6 +9,23 @@ using ComputerUse.Mcp.Vision;
 
 namespace ComputerUse.Mcp.Services;
 
+internal sealed class ClickControlMatch
+{
+    public int X { get; init; }
+    public int Y { get; init; }
+    public int Width { get; init; }
+    public int Height { get; init; }
+    public double Score { get; init; }
+}
+
+internal sealed class ClickControlResult
+{
+    public required string ControlId { get; init; }
+    public required string ScreenId { get; init; }
+    public required string FrameId { get; init; }
+    public required ClickControlMatch Match { get; init; }
+}
+
 internal sealed class ClickControlService
 {
     private const double RoiExpandFactor = 0.20;
@@ -69,10 +86,10 @@ internal sealed class ClickControlService
         _identities = identities;
     }
 
-    public Task<object> ClickAsync(string targetToken, string controlId, string? operationId, CancellationToken cancellationToken) =>
+    public Task<ClickControlResult> ClickAsync(string targetToken, string controlId, string? operationId, CancellationToken cancellationToken) =>
         _coordinator.RunAsync(ct => ClickLockedAsync(targetToken, controlId, operationId, ct), cancellationToken);
 
-    private async Task<object> ClickLockedAsync(
+    private async Task<ClickControlResult> ClickLockedAsync(
         string targetToken,
         string controlId,
         string? operationId,
@@ -87,7 +104,7 @@ internal sealed class ClickControlService
                     throw new ComputerUseException(ErrorCodes.DuplicateInFlight, "This operationId is already in flight.");
                 if (existing.IsError)
                     throw new ComputerUseException(existing.Code ?? ErrorCodes.ActionFailed, existing.Message ?? "The previous operation failed.", existing.Result);
-                if (existing.Result is object cached)
+                if (existing.Result is ClickControlResult cached)
                     return cached;
             }
         }
@@ -123,7 +140,7 @@ internal sealed class ClickControlService
         }
     }
 
-    private async Task<object> ClickCoreAsync(
+    private async Task<ClickControlResult> ClickCoreAsync(
         string targetToken,
         string controlId,
         InjectionTracker tracker,
@@ -208,18 +225,18 @@ internal sealed class ClickControlService
         tracker.MouseDown(MouseButtonKind.Left);
         tracker.MouseUp(MouseButtonKind.Left);
 
-        return new
+        return new ClickControlResult
         {
-            controlId = control.ControlId,
-            screenId = control.ScreenId,
-            frameId = frame.FrameId,
-            match = new
+            ControlId = control.ControlId,
+            ScreenId = control.ScreenId,
+            FrameId = frame.FrameId,
+            Match = new ClickControlMatch
             {
-                x = match.X,
-                y = match.Y,
-                width = match.Width,
-                height = match.Height,
-                score = match.Score
+                X = match.X,
+                Y = match.Y,
+                Width = match.Width,
+                Height = match.Height,
+                Score = match.Score
             }
         };
     }
