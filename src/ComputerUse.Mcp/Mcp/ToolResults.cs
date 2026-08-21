@@ -1,5 +1,6 @@
 using System.Text.Json;
 using ComputerUse.Mcp.Domain;
+using ComputerUse.Mcp.Services;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 
@@ -13,6 +14,11 @@ internal static class ToolResults
     {
         OperateOutcome operate => JsonSerializer.SerializeToElement(operate, ComputerUseJsonContext.Default.OperateOutcome),
         ScreenshotResult shot => JsonSerializer.SerializeToElement(shot, ComputerUseJsonContext.Default.ScreenshotResult),
+        ObserveResult observe => JsonSerializer.SerializeToElement(observe, ComputerUseJsonContext.Default.ObserveResult),
+        RememberScreenResult rememberScreen => JsonSerializer.SerializeToElement(rememberScreen, ComputerUseJsonContext.Default.RememberScreenResult),
+        RememberControlResult rememberControl => JsonSerializer.SerializeToElement(rememberControl, ComputerUseJsonContext.Default.RememberControlResult),
+        ListRememberedResult listed => JsonSerializer.SerializeToElement(listed, ComputerUseJsonContext.Default.ListRememberedResult),
+        ForgetControlsResult forgotten => JsonSerializer.SerializeToElement(forgotten, ComputerUseJsonContext.Default.ForgetControlsResult),
         _ => JsonSerializer.SerializeToElement(payload, Json)
     };
 

@@ -96,6 +96,7 @@ internal sealed class OperateService
             var frame = _frames.Require(request.FrameId);
             _frames.EnsureMatchesToken(frame, token);
             var live = ReadGeometry(token.Hwnd);
+            FrameVisualization.EnsurePointerMayUse(frame, request.HasPointerActions);
             _frames.EnsureGeometryIfPointer(frame, live, request.HasPointerActions);
 
             AccessGuards.EnsureInteractive(_session);

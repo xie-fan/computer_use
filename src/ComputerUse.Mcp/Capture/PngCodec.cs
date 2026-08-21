@@ -17,7 +17,7 @@ internal static class PngCodec
         return SavePng(bmp);
     }
 
-    public static (byte[] Png, int Width, int Height, double Scale) FitLongEdge(
+    public static (byte[] Png, byte[] Bgra, int Width, int Height, double Scale) FitLongEdge(
         byte[] bgra, int width, int height, int stride, int maxLongEdge, int maxPngBytes)
     {
         var longEdge = Math.Max(width, height);
@@ -38,14 +38,14 @@ internal static class PngCodec
             {
                 png = SavePng(src);
                 if (png.Length <= maxPngBytes)
-                    return (png, width, height, 1.0);
+                    return (png, CopyCompactBgra(src), width, height, 1.0);
             }
             else
             {
                 using var scaled = ScaleTo(src, outW, outH);
                 png = SavePng(scaled);
                 if (png.Length <= maxPngBytes)
-                    return (png, outW, outH, mappedScale);
+                    return (png, CopyCompactBgra(scaled), outW, outH, mappedScale);
             }
 
             if (outW <= 1 && outH <= 1)
@@ -72,6 +72,26 @@ internal static class PngCodec
         using var ms = new MemoryStream();
         bmp.Save(ms, ImageFormat.Png);
         return ms.ToArray();
+    }
+
+    private static byte[] CopyCompactBgra(Bitmap bmp)
+    {
+        var width = bmp.Width;
+        var height = bmp.Height;
+        var destStride = checked(width * 4);
+        var dest = new byte[checked(destStride * height)];
+        var data = bmp.LockBits(new Rectangle(0, 0, width, height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        try
+        {
+            for (var y = 0; y < height; y++)
+                Marshal.Copy(data.Scan0 + y * data.Stride, dest, y * destStride, destStride);
+        }
+        finally
+        {
+            bmp.UnlockBits(data);
+        }
+
+        return dest;
     }
 
     private static Bitmap FromBgra(byte[] bgra, int width, int height, int stride)

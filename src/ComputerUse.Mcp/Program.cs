@@ -5,6 +5,7 @@ using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Identity;
 using ComputerUse.Mcp.Input;
 using ComputerUse.Mcp.Mcp;
+using ComputerUse.Mcp.Memory;
 using ComputerUse.Mcp.Native;
 using ComputerUse.Mcp.Services;
 using Microsoft.Extensions.DependencyInjection;
@@ -46,6 +47,11 @@ builder.Services.AddSingleton<IHostProcessResolver, HostProcessResolver>();
 builder.Services.AddSingleton<WindowListService>();
 builder.Services.AddSingleton<ScreenshotService>();
 builder.Services.AddSingleton<OperateService>();
+builder.Services.AddSingleton(sp =>
+    new MemoryCatalog(MemoryCatalog.DefaultRootDirectory, sp.GetRequiredService<Limits>()));
+builder.Services.AddSingleton<RememberService>();
+builder.Services.AddSingleton<ObserveService>();
+builder.Services.AddSingleton<ClickControlService>();
 
 builder.Services
     .AddMcpServer(options =>

@@ -101,7 +101,10 @@ internal sealed class ScreenshotService
                 Dpi = live.Dpi,
                 MonitorDeviceName = monitor?.DeviceName ?? "",
                 CapturedAt = capturedAt,
-                Rounding = CoordinateMapper.Rounding
+                Rounding = CoordinateMapper.Rounding,
+                Bgra = fitted.Bgra,
+                BgraStride = fitted.Width * 4,
+                ImageReturnedToClient = true
             };
             _frames.Add(frame);
 

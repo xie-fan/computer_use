@@ -24,6 +24,15 @@ internal sealed record Limits
     public int InputPositionEpsilonPx { get; init; } = 3;
     public int MaxOperationIdChars { get; init; } = 128;
 
+    public int MaxScreensPerAppKey { get; init; } = 32;
+    public int MaxControlsPerScreen { get; init; } = 64;
+    public int MaxTemplateLongEdge { get; init; } = 256;
+    public int MaxMemoryLibraryBytes { get; init; } = 256 * 1024 * 1024;
+    public int MemorySoftTtlDays { get; init; } = 30;
+    public int MinCropEdgePx { get; init; } = 24;
+    public double TemplateScaleMin { get; init; } = 0.85;
+    public double TemplateScaleMax { get; init; } = 1.15;
+
     public static Limits V1 { get; } = new();
 
     public object ToPublicDto() => new

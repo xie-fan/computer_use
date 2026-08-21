@@ -36,6 +36,34 @@ internal sealed class FrameCache
         }
     }
 
+    public bool TryGetLatestForToken(TargetTokenPayload token, out FrameRecord frame)
+    {
+        ArgumentNullException.ThrowIfNull(token);
+        lock (_gate)
+        {
+            ExpireUnlocked(DateTimeOffset.UtcNow);
+            for (var node = _lru.First; node is not null; node = node.Next)
+            {
+                var candidate = node.Value;
+                if (candidate.Bgra is not { Length: > 0 })
+                    continue;
+                if (candidate.Hwnd != token.Hwnd
+                    || candidate.Pid != token.Pid
+                    || candidate.CreateTimeUtc != token.CreateTimeUtc
+                    || !string.Equals(candidate.ClassName, token.ClassName, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                frame = candidate;
+                return true;
+            }
+        }
+
+        frame = null!;
+        return false;
+    }
+
     public FrameRecord Require(string frameId)
     {
         lock (_gate)

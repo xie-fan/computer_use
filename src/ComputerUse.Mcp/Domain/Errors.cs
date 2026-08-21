@@ -32,6 +32,16 @@ internal static class ErrorCodes
     public const string Cancelled = "cancelled";
     public const string DuplicateInFlight = "duplicate_in_flight";
     public const string ClipboardFailed = "clipboard_failed";
+
+    public const string FrameNotVisualized = "frame_not_visualized";
+    public const string ScreenUnknown = "screen_unknown";
+    public const string ScreenAmbiguous = "screen_ambiguous";
+    public const string ScreenMismatch = "screen_mismatch";
+    public const string TemplateNotFound = "template_not_found";
+    public const string TemplateAmbiguous = "template_ambiguous";
+    public const string TemplateScaleMismatch = "template_scale_mismatch";
+    public const string UnknownControl = "unknown_control";
+    public const string LowEntropyCrop = "low_entropy_crop";
 }
 
 internal sealed class ComputerUseException : Exception

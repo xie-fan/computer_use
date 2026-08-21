@@ -146,6 +146,13 @@ internal sealed class FrameRecord
     public required DateTimeOffset CapturedAt { get; init; }
     public required string Rounding { get; init; }
 
+    /// <summary>Returned-image BGRA (model coordinate space). Null until capture stores pixels.</summary>
+    public byte[]? Bgra { get; init; }
+
+    public int BgraStride { get; init; }
+
+    public bool ImageReturnedToClient { get; init; }
+
     public TransformDto ToTransformDto() => new()
     {
         Rounding = Rounding,

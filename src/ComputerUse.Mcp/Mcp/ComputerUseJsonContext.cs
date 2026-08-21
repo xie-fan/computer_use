@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
 using ComputerUse.Mcp.Domain;
+using ComputerUse.Mcp.Memory;
+using ComputerUse.Mcp.Services;
 
 namespace ComputerUse.Mcp.Mcp;
 
@@ -18,4 +20,33 @@ namespace ComputerUse.Mcp.Mcp;
 [JsonSerializable(typeof(SizeDto))]
 [JsonSerializable(typeof(DpiDto))]
 [JsonSerializable(typeof(MonitorRefDto))]
+[JsonSerializable(typeof(ObserveResult))]
+[JsonSerializable(typeof(RememberedControl))]
+[JsonSerializable(typeof(RememberedScreen))]
+[JsonSerializable(typeof(RememberScreenResult))]
+[JsonSerializable(typeof(RememberControlResult))]
+[JsonSerializable(typeof(ListRememberedResult))]
+[JsonSerializable(typeof(ForgetControlsResult))]
 internal partial class ComputerUseJsonContext : JsonSerializerContext;
+
+internal sealed class RememberScreenResult
+{
+    public required string ScreenId { get; init; }
+}
+
+internal sealed class RememberControlResult
+{
+    public required string ControlId { get; init; }
+}
+
+internal sealed class ListRememberedResult
+{
+    public bool HostWindow { get; init; }
+    public IReadOnlyList<RememberedScreen> Screens { get; init; } = [];
+    public IReadOnlyList<RememberedControl> Controls { get; init; } = [];
+}
+
+internal sealed class ForgetControlsResult
+{
+    public bool HostWindow { get; init; }
+}

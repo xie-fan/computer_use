@@ -20,6 +20,7 @@ internal sealed class TargetTokenService
     private readonly Dictionary<IssuedKey, IssuedEntry> _issued = [];
     private readonly object _gate = new();
     private int _issuedGeneration;
+    private long _lastIssuedUnixMs;
 
     public TargetTokenService()
     {
@@ -130,6 +131,9 @@ internal sealed class TargetTokenService
             throw new InvalidOperationException("Class name is too long to encode.");
 
         var issued = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        if (issued <= _lastIssuedUnixMs)
+            issued = _lastIssuedUnixMs + 1;
+        _lastIssuedUnixMs = issued;
         Span<byte> payload = stackalloc byte[8 + 8 + 4 + 8 + 8 + 2 + classBytes.Length];
         var w = payload;
         BinaryPrimitives.WriteUInt64LittleEndian(w, 1);
