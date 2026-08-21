@@ -154,6 +154,12 @@ internal static class Program
             {
                 var list = await CallJsonAsync(mismatch, "list_windows", []);
                 notepadToken = FindNotepadToken(list)!;
+                var observed = await CallJsonAsync(mismatch, "observe_window", new Dictionary<string, object?>
+                {
+                    ["targetToken"] = notepadToken
+                });
+                Check("pre-change observe still sees remembered screen", observed.GetProperty("screenId").GetString() == screenId);
+
                 var shot = await ScreenshotAsync(mismatch, notepadToken);
                 await CallJsonAsync(mismatch, "operate_window", new Dictionary<string, object?>
                 {
@@ -164,10 +170,6 @@ internal static class Program
                         new Dictionary<string, object?> { ["type"] = "key", ["key"] = "A", ["modifiers"] = new[] { "Ctrl" } },
                         new Dictionary<string, object?> { ["type"] = "paste", ["value"] = new string('Q', 400) }
                     }
-                });
-                await CallJsonAsync(mismatch, "observe_window", new Dictionary<string, object?>
-                {
-                    ["targetToken"] = notepadToken
                 });
                 var code = await CallErrorAsync(mismatch, "click_control", new Dictionary<string, object?>
                 {
@@ -288,6 +290,10 @@ internal static class Program
     {
         Check("list_windows has windows[]", list.TryGetProperty("windows", out _));
         Check("list_windows has contractVersion", list.TryGetProperty("contractVersion", out _));
+        Check("list_windows capabilities.controlMemory is true",
+            list.TryGetProperty("capabilities", out var caps)
+            && caps.TryGetProperty("controlMemory", out var cm)
+            && cm.ValueKind is JsonValueKind.True);
         Check("list_windows limits omit memory quotas",
             list.TryGetProperty("limits", out var limits)
             && !limits.ToString().Contains("maxScreens", StringComparison.OrdinalIgnoreCase));
