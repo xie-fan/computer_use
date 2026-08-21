@@ -36,6 +36,10 @@ internal interface IProcessQuery
     bool TryGetCreateTimeUtc(uint pid, out long fileTimeUtc);
     string? TryGetProcessName(uint pid);
     string? TryGetNormalizedImagePath(uint pid);
+    string? TryGetPackageFamilyName(uint pid);
+    string? TryGetSignerSubject(uint pid);
+    string? TryGetProductName(uint pid);
+    string? TryGetProductVersion(uint pid);
     uint? TryGetParentPid(uint pid);
     IntegrityLevel GetIntegrityLevel(uint pid);
     IntegrityLevel GetCurrentIntegrityLevel();

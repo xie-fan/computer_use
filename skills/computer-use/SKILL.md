@@ -107,3 +107,4 @@ HostWindow（`isHostWindow: true`）：允许 `list_windows`、`screenshot_windo
 | `frame_not_visualized` | 指针 Action 用了从未把 PNG 交给你的 `frameId`（通常是 observe 的 `visualized: false`）。**必须** `screenshot_window` 取得可视化 `frameId` 后再指针 operate。禁止重试该 observe 帧上的指针动作。无坐标 Action 仍可用 observe 帧 |
 | `unknown_control` | `controlId` 不存在或不属于该 token 的 AppKey。禁止改猜其它 id。目标仍要点时：**必须** `screenshot_window` → 看图 → **先** operate 成功 → **然后必须** remember |
 | `low_entropy_crop` | remember 的框空白 / 纯色 / 过小，库未写入。**必须**换稳定、高熵、≥24×24 的框（指纹避免标题栏可变文字），在**同一可视化** `frameId` 仍热时重试 `remember_*`。禁止用原低熵框充数 |
+| `app_identity_unavailable` | 无法解析该窗的稳定应用身份（无 PFN、组不出签名+产品+版本、镜像路径也空）。**冷路径：`screenshot_window` 仍可用**。禁止 remember / click_control / observe（非 HostWindow）/ list_remembered / forget。不要猜 `|ClassName` 或用 PID 当库键。换一个能解析身份的窗，或告知用户 |

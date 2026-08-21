@@ -42,6 +42,7 @@ internal static class ErrorCodes
     public const string TemplateScaleMismatch = "template_scale_mismatch";
     public const string UnknownControl = "unknown_control";
     public const string LowEntropyCrop = "low_entropy_crop";
+    public const string AppIdentityUnavailable = "app_identity_unavailable";
 }
 
 internal sealed class ComputerUseException : Exception

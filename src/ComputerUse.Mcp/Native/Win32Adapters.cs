@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using ComputerUse.Mcp.Abstractions;
 using ComputerUse.Mcp.Domain;
@@ -191,6 +193,43 @@ internal sealed class Win32ProcessQuery : IProcessQuery
         }
     }
 
+    public string? TryGetPackageFamilyName(uint pid)
+    {
+        var handle = NativeMethods.OpenProcess(NativeMethods.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (handle == 0)
+            return null;
+        try
+        {
+            return ReadPackageFamilyName(handle);
+        }
+        finally
+        {
+            NativeMethods.CloseHandle(handle);
+        }
+    }
+
+    public string? TryGetSignerSubject(uint pid)
+    {
+        var path = TryGetNormalizedImagePath(pid);
+        if (path is null)
+            return null;
+        try
+        {
+#pragma warning disable SYSLIB0057 // 议题指定 Authenticode Subject；未签名/异常 → null。测试走 Fake，不调此路径。
+            using var cert = X509Certificate.CreateFromSignedFile(path);
+#pragma warning restore SYSLIB0057
+            return NullIfBlank(cert.Subject);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    public string? TryGetProductName(uint pid) => ReadFileVersion(pid, static info => info.ProductName);
+
+    public string? TryGetProductVersion(uint pid) => ReadFileVersion(pid, static info => info.ProductVersion);
+
     public uint? TryGetParentPid(uint pid)
     {
         var snap = NativeMethods.CreateToolhelp32Snapshot(NativeMethods.TH32CS_SNAPPROCESS, 0);
@@ -292,6 +331,41 @@ internal sealed class Win32ProcessQuery : IProcessQuery
             return sb.ToString();
         }
     }
+
+    private static string? ReadPackageFamilyName(nint handle)
+    {
+        uint length = 0;
+        var status = NativeMethods.GetPackageFamilyName(handle, ref length, null);
+        if (status == NativeMethods.APPMODEL_ERROR_NO_PACKAGE)
+            return null;
+        if (length == 0)
+            return null;
+
+        var sb = new StringBuilder((int)length);
+        status = NativeMethods.GetPackageFamilyName(handle, ref length, sb);
+        if (status != NativeMethods.ERROR_SUCCESS)
+            return null;
+        return NullIfBlank(sb.ToString());
+    }
+
+    private string? ReadFileVersion(uint pid, Func<FileVersionInfo, string?> selector)
+    {
+        var path = TryGetNormalizedImagePath(pid);
+        if (path is null)
+            return null;
+        try
+        {
+            var info = FileVersionInfo.GetVersionInfo(path);
+            return NullIfBlank(selector(info));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? NullIfBlank(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
 
     private static IntegrityLevel ReadIntegrityFromHandle(nint process)
     {

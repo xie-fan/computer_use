@@ -1,5 +1,6 @@
 using ComputerUse.Mcp.Capture;
 using ComputerUse.Mcp.Domain;
+using ComputerUse.Mcp.Identity;
 using ComputerUse.Mcp.Memory;
 using ComputerUse.Mcp.Vision;
 
@@ -28,13 +29,13 @@ internal sealed class RememberService
         string appKey,
         string screenKey,
         IReadOnlyList<PixelBox> fingerprints,
-        bool hostWindow)
+        bool hostWindow,
+        AppIdentity? diagnostics = null)
     {
+        EnsureRememberAllowed(frame, hostWindow);
         ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(screenKey);
         ArgumentNullException.ThrowIfNull(fingerprints);
-
-        EnsureRememberAllowed(frame, hostWindow);
         EnsureFingerprintLayout(frame.Width, frame.Height, fingerprints);
 
         var crops = ExtractCrops(frame, fingerprints);
@@ -69,7 +70,7 @@ internal sealed class RememberService
             frame.Dpi.Y,
             hash.Bits);
 
-        return _catalog.PutScreen(appKey, screenKey, assets, snapshot);
+        return _catalog.PutScreen(appKey, screenKey, assets, snapshot, diagnostics);
     }
 
     public string RememberControl(
@@ -80,11 +81,11 @@ internal sealed class RememberService
         PixelBox box,
         bool hostWindow)
     {
+        EnsureRememberAllowed(frame, hostWindow);
         ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(screenId);
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
 
-        EnsureRememberAllowed(frame, hostWindow);
         if (!_catalog.ScreenExists(appKey, screenId))
         {
             throw new ComputerUseException(

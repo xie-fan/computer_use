@@ -1,4 +1,5 @@
 using ComputerUse.Mcp.Domain;
+using ComputerUse.Mcp.Identity;
 using ComputerUse.Mcp.Memory;
 
 namespace ComputerUse.Mcp.Tests.Memory;
@@ -101,5 +102,64 @@ public sealed class MemoryCatalogTests : IDisposable
         Assert.DoesNotContain("data:image", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("\"png\"", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Bgra", json, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void PutScreen_WritesIdentityDiagnosticsToAppJson()
+    {
+        var catalog = new MemoryCatalog(_root, Limits.V1);
+        var identity = new AppIdentity(
+            "Pfn.Name_id",
+            "CN=Signer",
+            "Product",
+            "1.2.3",
+            @"c:\apps\normalized\app.exe",
+            "Notepad")
+        {
+            RawImagePath = @"C:\APPS\app.exe"
+        };
+        catalog.PutScreen("app.key", "home", 2, identity);
+
+        Assert.True(catalog.TryGetAppMetadata("app.key", out var meta));
+        Assert.Equal("app.key", meta.AppKey);
+        Assert.Equal("Pfn.Name_id", meta.PackageFamilyName);
+        Assert.Equal("CN=Signer", meta.SignerSubject);
+        Assert.Equal("Product", meta.ProductName);
+        Assert.Equal("1.2.3", meta.ProductVersion);
+        Assert.Equal(@"C:\APPS\app.exe", meta.ImagePath);
+        Assert.Equal("Notepad", meta.ClassName);
+    }
+
+    [Fact]
+    public void OldAppJson_WithoutDiagnostics_StillLists()
+    {
+        var catalog = new MemoryCatalog(_root, Limits.V1);
+        var screenId = catalog.PutScreen("app.a", "home", 2);
+        Assert.True(catalog.TryGetAppMetadata("app.a", out var meta));
+        Assert.Equal("app.a", meta.AppKey);
+        Assert.Null(meta.PackageFamilyName);
+        Assert.Null(meta.ImagePath);
+        Assert.Contains(catalog.List("app.a"), s => s.ScreenId == screenId);
+    }
+
+    [Fact]
+    public void DiagnosticsDoNotChangeDirectoryHash()
+    {
+        var a = Path.Combine(_root, "a");
+        var b = Path.Combine(_root, "b");
+        var catA = new MemoryCatalog(a, Limits.V1);
+        var catB = new MemoryCatalog(b, Limits.V1);
+        catA.PutScreen("same-key", "s", 2);
+        catB.PutScreen(
+            "same-key",
+            "s",
+            2,
+            new AppIdentity("pfn", "CN=X", "P", "1", @"c:\x.exe", "Cls"));
+
+        var dirsA = Directory.GetDirectories(a);
+        var dirsB = Directory.GetDirectories(b);
+        Assert.Single(dirsA);
+        Assert.Single(dirsB);
+        Assert.Equal(Path.GetFileName(dirsA[0]), Path.GetFileName(dirsB[0]));
     }
 }

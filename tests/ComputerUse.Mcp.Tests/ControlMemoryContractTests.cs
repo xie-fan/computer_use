@@ -18,6 +18,7 @@ public sealed class ControlMemoryContractTests
         Assert.Equal("template_scale_mismatch", ErrorCodes.TemplateScaleMismatch);
         Assert.Equal("unknown_control", ErrorCodes.UnknownControl);
         Assert.Equal("low_entropy_crop", ErrorCodes.LowEntropyCrop);
+        Assert.Equal("app_identity_unavailable", ErrorCodes.AppIdentityUnavailable);
     }
 
     [Fact]

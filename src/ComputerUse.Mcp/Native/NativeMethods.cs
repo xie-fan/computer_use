@@ -41,6 +41,8 @@ internal static partial class NativeMethods
     public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     public const uint PROCESS_QUERY_INFORMATION = 0x0400;
     public const uint TOKEN_QUERY = 0x0008;
+    public const int ERROR_SUCCESS = 0;
+    public const int APPMODEL_ERROR_NO_PACKAGE = 15700;
     public const int TokenIntegrityLevel = 25;
 
     public const uint DESKTOP_READOBJECTS = 0x0001;
@@ -272,6 +274,12 @@ internal static partial class NativeMethods
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern bool QueryFullProcessImageName(nint hProcess, uint dwFlags, StringBuilder lpExeName, ref uint lpdwSize);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern uint GetLongPathName(string lpszShortPath, StringBuilder lpszLongPath, uint cchBuffer);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    public static extern int GetPackageFamilyName(nint hProcess, ref uint packageFamilyNameLength, StringBuilder? packageFamilyName);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern nint CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);

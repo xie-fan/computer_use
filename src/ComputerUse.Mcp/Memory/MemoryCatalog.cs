@@ -6,6 +6,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using ComputerUse.Mcp.Domain;
+using ComputerUse.Mcp.Identity;
 
 namespace ComputerUse.Mcp.Memory;
 
@@ -84,6 +85,15 @@ internal sealed record CatalogScreenAssets(
     IReadOnlyList<CatalogFingerprint> Fingerprints,
     IReadOnlyList<CatalogControl> Controls);
 
+internal sealed record AppCatalogMetadata(
+    string AppKey,
+    string? PackageFamilyName,
+    string? SignerSubject,
+    string? ProductName,
+    string? ProductVersion,
+    string? ImagePath,
+    string? ClassName);
+
 internal sealed class MemoryCatalog
 {
     private const string ScreensFolder = "screens";
@@ -111,7 +121,7 @@ internal sealed class MemoryCatalog
         Directory.CreateDirectory(_root);
     }
 
-    public string PutScreen(string appKey, string screenKey, int fingerprintCount)
+    public string PutScreen(string appKey, string screenKey, int fingerprintCount, AppIdentity? diagnostics = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(screenKey);
@@ -119,7 +129,7 @@ internal sealed class MemoryCatalog
 
         lock (_gate)
         {
-            var appDir = EnsureAppDirectory(appKey);
+            var appDir = EnsureAppDirectory(appKey, diagnostics);
             EnsureLibraryQuota();
             var screenCount = CountScreens(appDir);
             if (screenCount >= _limits.MaxScreensPerAppKey)
@@ -156,7 +166,8 @@ internal sealed class MemoryCatalog
         string appKey,
         string screenKey,
         IReadOnlyList<FingerprintAsset> fingerprints,
-        ScreenSnapshot snapshot)
+        ScreenSnapshot snapshot,
+        AppIdentity? diagnostics = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
         ArgumentException.ThrowIfNullOrWhiteSpace(screenKey);
@@ -166,7 +177,7 @@ internal sealed class MemoryCatalog
         lock (_gate)
         {
             var extraBytes = SumPngBytes(fingerprints);
-            var appDir = EnsureAppDirectory(appKey);
+            var appDir = EnsureAppDirectory(appKey, diagnostics);
             EnsureLibraryQuota(extraBytes);
             var screenCount = CountScreens(appDir);
             if (screenCount >= _limits.MaxScreensPerAppKey)
@@ -549,15 +560,49 @@ internal sealed class MemoryCatalog
         }
     }
 
-    private string EnsureAppDirectory(string appKey)
+    public bool TryGetAppMetadata(string appKey, out AppCatalogMetadata metadata)
+    {
+        metadata = default!;
+        ArgumentException.ThrowIfNullOrWhiteSpace(appKey);
+        lock (_gate)
+        {
+            var stored = ReadJson<StoredApp>(Path.Combine(GetAppDirectory(appKey), AppFileName));
+            if (stored is null)
+                return false;
+
+            metadata = new AppCatalogMetadata(
+                stored.AppKey,
+                stored.PackageFamilyName,
+                stored.SignerSubject,
+                stored.ProductName,
+                stored.ProductVersion,
+                stored.ImagePath,
+                stored.ClassName);
+            return true;
+        }
+    }
+
+    private string EnsureAppDirectory(string appKey, AppIdentity? diagnostics = null)
     {
         var appDir = GetAppDirectory(appKey);
         Directory.CreateDirectory(appDir);
         var appFile = Path.Combine(appDir, AppFileName);
         if (!File.Exists(appFile))
-            WriteJson(appFile, new StoredApp { AppKey = appKey });
+            WriteJson(appFile, ToStoredApp(appKey, diagnostics));
         return appDir;
     }
+
+    private static StoredApp ToStoredApp(string appKey, AppIdentity? diagnostics) =>
+        new()
+        {
+            AppKey = appKey,
+            PackageFamilyName = diagnostics?.PackageFamilyName,
+            SignerSubject = diagnostics?.SignerSubject,
+            ProductName = diagnostics?.ProductName,
+            ProductVersion = diagnostics?.ProductVersion,
+            ImagePath = diagnostics?.RawImagePath ?? diagnostics?.NormalizedImagePath,
+            ClassName = diagnostics?.ClassName
+        };
 
     private string GetAppDirectory(string appKey)
     {
@@ -739,6 +784,12 @@ internal sealed class MemoryCatalog
     private sealed class StoredApp
     {
         public required string AppKey { get; init; }
+        public string? PackageFamilyName { get; init; }
+        public string? SignerSubject { get; init; }
+        public string? ProductName { get; init; }
+        public string? ProductVersion { get; init; }
+        public string? ImagePath { get; init; }
+        public string? ClassName { get; init; }
     }
 
     private sealed class StoredScreen

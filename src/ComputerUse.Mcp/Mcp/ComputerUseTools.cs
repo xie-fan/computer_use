@@ -26,6 +26,7 @@ internal sealed class ComputerUseTools
     private readonly IWindowQuery _windows;
     private readonly IProcessQuery _processes;
     private readonly IHostProcessResolver _host;
+    private readonly AppIdentityFactory _identities;
     private readonly Limits _limits;
     private readonly ILogger<ComputerUseTools> _logger;
 
@@ -42,6 +43,7 @@ internal sealed class ComputerUseTools
         IWindowQuery windows,
         IProcessQuery processes,
         IHostProcessResolver host,
+        AppIdentityFactory identities,
         Limits limits,
         ILogger<ComputerUseTools> logger)
     {
@@ -57,6 +59,7 @@ internal sealed class ComputerUseTools
         _windows = windows;
         _processes = processes;
         _host = host;
+        _identities = identities;
         _limits = limits;
         _logger = logger;
     }
@@ -157,10 +160,10 @@ internal sealed class ComputerUseTools
     {
         try
         {
-            var (token, appKey, hostWindow) = ResolveTarget(targetToken);
+            var (token, appKey, hostWindow, diagnostics) = ResolveTarget(targetToken);
             var frame = RequireVisualizedFrame(frameId, token);
             var boxes = ParseBoxes(fingerprints, "fingerprints");
-            var screenId = _remember.RememberScreen(frame, appKey, screenKey, boxes, hostWindow);
+            var screenId = _remember.RememberScreen(frame, appKey, screenKey, boxes, hostWindow, diagnostics);
             return ToolResults.Ok(new RememberScreenResult { ScreenId = screenId });
         }
         catch (ComputerUseException ex)
@@ -184,7 +187,7 @@ internal sealed class ComputerUseTools
     {
         try
         {
-            var (token, appKey, hostWindow) = ResolveTarget(targetToken);
+            var (token, appKey, hostWindow, _) = ResolveTarget(targetToken);
             var frame = RequireVisualizedFrame(frameId, token);
             var parsed = ParseBox(box, "box");
             var controlId = _remember.RememberControl(frame, appKey, screenId, name, parsed, hostWindow);
@@ -234,7 +237,7 @@ internal sealed class ComputerUseTools
     {
         try
         {
-            var (_, appKey, hostWindow) = ResolveTarget(targetToken);
+            var (_, appKey, hostWindow, _) = ResolveTarget(targetToken);
             if (hostWindow)
             {
                 return ToolResults.Ok(new ListRememberedResult
@@ -289,7 +292,7 @@ internal sealed class ComputerUseTools
                     "targetToken is required to resolve the AppKey.");
             }
 
-            var (_, appKey, hostWindow) = ResolveTarget(targetToken);
+            var (_, appKey, hostWindow, _) = ResolveTarget(targetToken);
             if (hostWindow)
             {
                 return ToolResults.Ok(new ForgetControlsResult { HostWindow = true });
@@ -312,13 +315,15 @@ internal sealed class ComputerUseTools
         }
     }
 
-    private (TargetTokenPayload Token, string AppKey, bool HostWindow) ResolveTarget(string targetToken)
+    private (TargetTokenPayload Token, string AppKey, bool HostWindow, AppIdentity? Diagnostics) ResolveTarget(string targetToken)
     {
         var token = _tokens.RequireValid(targetToken, _windows, _processes);
         var hostWindow = _host.IsHostProcess(token.Pid, token.CreateTimeUtc);
-        var path = _processes.TryGetNormalizedImagePath(token.Pid);
-        var appKey = AppKeyResolver.Compute(new AppIdentity(null, null, null, null, path, token.ClassName)).Value;
-        return (token, appKey, hostWindow);
+        if (hostWindow)
+            return (token, "", true, null);
+
+        var app = _identities.Resolve(token.Pid, token.CreateTimeUtc, token.ClassName);
+        return (token, app.Value, false, app.Diagnostics);
     }
 
     private FrameRecord RequireVisualizedFrame(string frameId, TargetTokenPayload token)

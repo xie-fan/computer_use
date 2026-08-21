@@ -33,6 +33,7 @@ internal sealed class ObserveService
     private readonly ICapturePipeline _capture;
     private readonly IHostProcessResolver _host;
     private readonly MemoryCatalog _catalog;
+    private readonly AppIdentityFactory _identities;
     private readonly Limits _limits;
 
     public ObserveService(
@@ -48,7 +49,8 @@ internal sealed class ObserveService
         ICapturePipeline capture,
         IHostProcessResolver host,
         MemoryCatalog catalog,
-        Limits limits)
+        Limits limits,
+        AppIdentityFactory identities)
     {
         _coordinator = coordinator;
         _tokens = tokens;
@@ -63,6 +65,7 @@ internal sealed class ObserveService
         _host = host;
         _catalog = catalog;
         _limits = limits;
+        _identities = identities;
     }
 
     public Task<ObserveResult> ObserveAsync(string targetToken, CancellationToken cancellationToken) =>
@@ -157,14 +160,7 @@ internal sealed class ObserveService
         int height,
         string frameId)
     {
-        var appKey = AppKeyResolver.Compute(
-            new AppIdentity(
-                null,
-                null,
-                null,
-                null,
-                _processes.TryGetNormalizedImagePath(token.Pid),
-                token.ClassName));
+        var appKey = _identities.Resolve(token.Pid, token.CreateTimeUtc, token.ClassName);
 
         var assets = _catalog.LoadAppScreens(appKey.Value);
         var identified = ScreenIdentifier.Identify(

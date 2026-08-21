@@ -28,6 +28,7 @@ internal sealed class ClickControlService
     private readonly IHostProcessResolver _host;
     private readonly MemoryCatalog _catalog;
     private readonly Limits _limits;
+    private readonly AppIdentityFactory _identities;
 
     public ClickControlService(
         DesktopOperationCoordinator coordinator,
@@ -44,7 +45,8 @@ internal sealed class ClickControlService
         IInputInjector input,
         IHostProcessResolver host,
         MemoryCatalog catalog,
-        Limits limits)
+        Limits limits,
+        AppIdentityFactory identities)
     {
         _coordinator = coordinator;
         _operationIds = operationIds;
@@ -61,6 +63,7 @@ internal sealed class ClickControlService
         _host = host;
         _catalog = catalog;
         _limits = limits;
+        _identities = identities;
     }
 
     public Task<object> ClickAsync(string targetToken, string controlId, string? operationId, CancellationToken cancellationToken) =>
@@ -133,13 +136,7 @@ internal sealed class ClickControlService
         if (_host.IsHostProcess(token.Pid))
             throw new ComputerUseException(ErrorCodes.HostWindowForbidden, "click_control is forbidden on HostWindow.");
 
-        var appKey = AppKeyResolver.Compute(new AppIdentity(
-            null,
-            null,
-            null,
-            null,
-            _processes.TryGetNormalizedImagePath(token.Pid),
-            token.ClassName)).Value;
+        var appKey = _identities.Resolve(token.Pid, token.CreateTimeUtc, token.ClassName).Value;
 
         if (!_catalog.TryLoadControl(appKey, controlId, out var control))
         {

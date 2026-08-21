@@ -28,6 +28,10 @@ internal sealed class FakeProcess
     public long CreateTimeUtc { get; set; }
     public string? Name { get; init; } = "app";
     public string? ImagePath { get; init; } = @"C:\apps\app.exe";
+    public string? PackageFamilyName { get; init; }
+    public string? SignerSubject { get; init; }
+    public string? ProductName { get; init; }
+    public string? ProductVersion { get; init; }
     public IntegrityLevel Integrity { get; init; } = IntegrityLevel.Medium;
 }
 
@@ -39,6 +43,10 @@ internal sealed class FakeWorld : IWindowQuery, IProcessQuery
 
     public int InfoCallCount { get; private set; }
     public int ParentMapCallCount { get; private set; }
+    public int PackageFamilyNameCallCount { get; private set; }
+    public int SignerSubjectCallCount { get; private set; }
+    public int ProductNameCallCount { get; private set; }
+    public int ProductVersionCallCount { get; private set; }
 
     public bool IsWindow(nint hwnd) => Windows.ContainsKey(hwnd);
     public uint GetPid(nint hwnd) => Windows[hwnd].Pid;
@@ -76,6 +84,26 @@ internal sealed class FakeWorld : IWindowQuery, IProcessQuery
 
     public string? TryGetProcessName(uint pid) => Processes.TryGetValue(pid, out var p) ? p.Name : null;
     public string? TryGetNormalizedImagePath(uint pid) => Processes.TryGetValue(pid, out var p) ? p.ImagePath : null;
+    public string? TryGetPackageFamilyName(uint pid)
+    {
+        PackageFamilyNameCallCount++;
+        return Processes.TryGetValue(pid, out var p) ? BlankToNull(p.PackageFamilyName) : null;
+    }
+    public string? TryGetSignerSubject(uint pid)
+    {
+        SignerSubjectCallCount++;
+        return Processes.TryGetValue(pid, out var p) ? BlankToNull(p.SignerSubject) : null;
+    }
+    public string? TryGetProductName(uint pid)
+    {
+        ProductNameCallCount++;
+        return Processes.TryGetValue(pid, out var p) ? BlankToNull(p.ProductName) : null;
+    }
+    public string? TryGetProductVersion(uint pid)
+    {
+        ProductVersionCallCount++;
+        return Processes.TryGetValue(pid, out var p) ? BlankToNull(p.ProductVersion) : null;
+    }
     public uint? TryGetParentPid(uint pid) => Processes.TryGetValue(pid, out var p) ? p.ParentPid : null;
     public IntegrityLevel GetIntegrityLevel(uint pid) => Processes.TryGetValue(pid, out var p) ? p.Integrity : IntegrityLevel.Unknown;
     public IntegrityLevel GetCurrentIntegrityLevel() => CurrentIntegrity;
@@ -98,6 +126,9 @@ internal sealed class FakeWorld : IWindowQuery, IProcessQuery
         ParentMapCallCount++;
         return Processes.ToDictionary(kv => kv.Key, kv => kv.Value.ParentPid ?? 0u);
     }
+
+    private static string? BlankToNull(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value;
 }
 
 internal sealed class FakeMonitors : IMonitorQuery

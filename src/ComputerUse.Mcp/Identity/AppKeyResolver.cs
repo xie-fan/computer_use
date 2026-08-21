@@ -6,7 +6,11 @@ internal sealed record AppIdentity(
     string? ProductName,
     string? ProductVersion,
     string? NormalizedImagePath,
-    string ClassName);
+    string ClassName)
+{
+    /// <summary>进程查询到的原始镜像路径，只写诊断，不参与 AppKey。</summary>
+    public string? RawImagePath { get; init; }
+}
 
 internal sealed record AppKey(string Value, AppIdentity Diagnostics);
 
@@ -16,6 +20,20 @@ internal static class AppKeyResolver
 
     public static AppKey Compute(AppIdentity identity)
         => new(BuildValue(identity), identity);
+
+    public static bool HasStableIdentity(AppIdentity identity)
+    {
+        if (Present(identity.PackageFamilyName))
+            return true;
+        if (Present(identity.SignerSubject)
+            && Present(identity.ProductName)
+            && Present(identity.ProductVersion))
+        {
+            return true;
+        }
+
+        return Present(identity.NormalizedImagePath);
+    }
 
     private static string BuildValue(AppIdentity identity)
     {

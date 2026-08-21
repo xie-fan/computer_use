@@ -213,7 +213,7 @@ AppKey（稳定复合键 + className）
 3. 有版本信息但无签名：`ProductName` + `ProductVersion` + 规范化镜像路径 + `className`。
 4. 回退：规范化镜像路径 + `className`（解析 8.3 短名、去常见版本子目录、小写）。
 
-计算一次后按 PID/镜像路径缓存。元数据 **必须保留** 原始 path、className、PFN、签名主体、产品名版本，仅作诊断，不参与静默合并。
+计算一次后按 PID/镜像路径缓存。元数据 **必须保留** 原始 path、className、PFN、签名主体、产品名版本，仅作诊断，不参与静默合并。若无 PFN、组不出签名主体+产品名+版本、且规范化路径为空，则拒绝 remember / click / observe / list_remembered / forget（非 HostWindow），错误码 `app_identity_unavailable`。禁止退化成 `|ClassName` 或把 PID 当键。HostWindow 仍返回空列表（`hostWindow: true`），不把宿主当成工具损坏。
 
 **绝对像素坐标不是身份，也不是点击依据。** 每个 Control 保存：
 
@@ -374,6 +374,7 @@ AppKey（稳定复合键 + className）
 | `unknown_control` | controlId 不存在或不属于该 token 的 AppKey |
 | `frame_not_visualized` | `operate_window` 指针 Action 引用了从未把 PNG 交给客户端的 `frameId` |
 | `low_entropy_crop` | remember 的框空白/纯色/过小 |
+| `app_identity_unavailable` | 无法解析稳定 AppKey（无 PFN、组不出签名+产品+版本、规范化路径也空）。screenshot 仍可用；remember / click / observe / list_remembered / forget 拒绝（HostWindow 除外） |
 
 其余 `stale_target`、`stale_capture`、`host_window_forbidden`、`point_occluded` 等与 v1 相同。
 

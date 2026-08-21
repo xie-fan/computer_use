@@ -44,6 +44,7 @@ builder.Services.AddSingleton<FrameCache>();
 builder.Services.AddSingleton<DesktopOperationCoordinator>();
 builder.Services.AddSingleton<OperationIdCache>();
 builder.Services.AddSingleton<IHostProcessResolver, HostProcessResolver>();
+builder.Services.AddSingleton<AppIdentityFactory>();
 builder.Services.AddSingleton<WindowListService>();
 builder.Services.AddSingleton<ScreenshotService>();
 builder.Services.AddSingleton<OperateService>();
