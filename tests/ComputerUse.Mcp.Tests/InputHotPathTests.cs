@@ -152,11 +152,18 @@ internal sealed class RecordingInjector : IInputInjector
 {
     public List<string> Log { get; } = [];
     public bool ThrowOnKeyStroke { get; set; }
+    public ScreenPoint? CursorOverride { get; set; }
+    private ScreenPoint _cursor;
+
     public bool SwapMouseButtons => false;
     public int DoubleClickTimeMs => 500;
     public void RefreshMetrics() { }
-    public void MoveAbsoluteVirtualDesk(int physicalX, int physicalY) => Log.Add($"move:{physicalX},{physicalY}");
-    public ScreenPoint GetCursorPos() => new(0, 0);
+    public void MoveAbsoluteVirtualDesk(int physicalX, int physicalY)
+    {
+        _cursor = new ScreenPoint(physicalX, physicalY);
+        Log.Add($"move:{physicalX},{physicalY}");
+    }
+    public ScreenPoint GetCursorPos() => CursorOverride ?? _cursor;
     public void MouseButton(MouseButtonKind logicalButton, bool down) => Log.Add($"mouse:{logicalButton}:{(down ? "down" : "up")}");
     public void Scroll(int dxNotches, int dyNotches) => Log.Add($"scroll:{dxNotches},{dyNotches}");
     public void Key(ushort virtualKey, bool down, bool extended) => Log.Add($"key:{virtualKey}:{(down ? "down" : "up")}");

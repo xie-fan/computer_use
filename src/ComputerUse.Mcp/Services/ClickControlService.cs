@@ -1,4 +1,5 @@
 using ComputerUse.Mcp.Abstractions;
+using ComputerUse.Mcp.Capture;
 using ComputerUse.Mcp.Coordination;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Identity;
@@ -25,6 +26,7 @@ internal sealed class ClickControlService
     private readonly IWindowActivator _activator;
     private readonly IHitTester _hitTester;
     private readonly IInputInjector _input;
+    private readonly ICapturePipeline _capture;
     private readonly IHostProcessResolver _host;
     private readonly MemoryCatalog _catalog;
     private readonly Limits _limits;
@@ -43,6 +45,7 @@ internal sealed class ClickControlService
         IWindowActivator activator,
         IHitTester hitTester,
         IInputInjector input,
+        ICapturePipeline capture,
         IHostProcessResolver host,
         MemoryCatalog catalog,
         Limits limits,
@@ -60,6 +63,7 @@ internal sealed class ClickControlService
         _activator = activator;
         _hitTester = hitTester;
         _input = input;
+        _capture = capture;
         _host = host;
         _catalog = catalog;
         _limits = limits;
@@ -69,7 +73,7 @@ internal sealed class ClickControlService
     public Task<object> ClickAsync(string targetToken, string controlId, string? operationId, CancellationToken cancellationToken) =>
         _coordinator.RunAsync(ct => ClickLockedAsync(targetToken, controlId, operationId, ct), cancellationToken);
 
-    private Task<object> ClickLockedAsync(
+    private async Task<object> ClickLockedAsync(
         string targetToken,
         string controlId,
         string? operationId,
@@ -85,7 +89,7 @@ internal sealed class ClickControlService
                 if (existing.IsError)
                     throw new ComputerUseException(existing.Code ?? ErrorCodes.ActionFailed, existing.Message ?? "The previous operation failed.", existing.Result);
                 if (existing.Result is object cached)
-                    return Task.FromResult(cached);
+                    return cached;
             }
         }
 
@@ -94,10 +98,11 @@ internal sealed class ClickControlService
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var body = ClickCore(targetToken, controlId, tracker, cancellationToken, out mayHaveExecuted);
+            var body = await ClickCoreAsync(targetToken, controlId, tracker, cancellationToken).ConfigureAwait(false);
+            mayHaveExecuted = true;
             if (operationId is not null)
                 _operationIds.Complete(operationId, body, true, false);
-            return Task.FromResult(body);
+            return body;
         }
         catch (ComputerUseException ex)
         {
@@ -119,14 +124,12 @@ internal sealed class ClickControlService
         }
     }
 
-    private object ClickCore(
+    private async Task<object> ClickCoreAsync(
         string targetToken,
         string controlId,
         InjectionTracker tracker,
-        CancellationToken cancellationToken,
-        out bool mayHaveExecuted)
+        CancellationToken cancellationToken)
     {
-        mayHaveExecuted = false;
         var token = _tokens.RequireValid(targetToken, _windows, _processes);
         AccessGuards.EnsureInteractive(_session);
         AccessGuards.EnsureCurrentDesktop(_desktops, token.Hwnd);
@@ -145,15 +148,14 @@ internal sealed class ClickControlService
                 "The controlId is unknown for this AppKey.");
         }
 
-        if (!_frames.TryGetLatestForToken(token, out var frame) || frame.Bgra is not { Length: > 0 })
+        // 认屏/匹配必须对着本次 Capture 的 fitted 帧，禁止只吃 observe 缓存。
+        var frame = await CaptureLiveFrameAsync(token, targetToken, cancellationToken).ConfigureAwait(false);
+        if (frame.Bgra is not { Length: > 0 })
         {
             throw new ComputerUseException(
-                ErrorCodes.StaleCapture,
-                "No live frame with pixels is cached for this target token.");
+                ErrorCodes.EmptyFrame,
+                "Capture produced an empty bitmap.");
         }
-
-        _frames.EnsureMatchesToken(frame, token);
-        _frames.EnsureGeometryIfPointer(frame, ReadGeometry(token.Hwnd), hasPointerActions: true);
 
         var screens = _catalog.LoadAppScreens(appKey);
         var library = ToLibrary(screens);
@@ -216,10 +218,9 @@ internal sealed class ClickControlService
         var monitors = _monitors.EnumerateMonitors();
         HitTest(point, token, monitors);
 
-        _input.MoveAbsoluteVirtualDesk(point.X, point.Y);
+        MoveTo(point);
         tracker.MouseDown(MouseButtonKind.Left);
         tracker.MouseUp(MouseButtonKind.Left);
-        mayHaveExecuted = true;
 
         return new
         {
@@ -302,6 +303,83 @@ internal sealed class ClickControlService
             templateStride,
             _limits.TemplateScaleMin,
             _limits.TemplateScaleMax);
+    }
+
+    private async Task<FrameRecord> CaptureLiveFrameAsync(
+        TargetTokenPayload token,
+        string targetToken,
+        CancellationToken cancellationToken)
+    {
+        CapturedBitmap? captured = null;
+        try
+        {
+            // 与 observe/screenshot 相同：先 restore 再拍，避免最小化窗黑屏后误报认屏/匹配失败。
+            _activator.RestoreIfMinimized(token.Hwnd, TimeSpan.FromMilliseconds(_limits.RestoreTimeoutMs));
+            var live = ReadGeometry(token.Hwnd);
+            captured = await _capture.CaptureAsync(token.Hwnd, _limits.CaptureTimeoutMs, cancellationToken).ConfigureAwait(false);
+            var fitted = PngCodec.FitLongEdge(
+                captured.Bgra,
+                captured.Width,
+                captured.Height,
+                captured.Stride,
+                _limits.MaxReturnedLongEdge,
+                _limits.MaxPngBytes);
+
+            var frameId = "fr1." + Guid.NewGuid().ToString("N");
+            var capturedAt = DateTimeOffset.UtcNow;
+            var monitors = _monitors.EnumerateMonitors();
+            var monitor = _monitors.FromWindow(token.Hwnd, monitors);
+            var origin = new ScreenPoint(live.WindowRect.Left, live.WindowRect.Top);
+
+            var frame = new FrameRecord
+            {
+                FrameId = frameId,
+                TargetToken = targetToken,
+                Hwnd = token.Hwnd,
+                Pid = token.Pid,
+                CreateTimeUtc = token.CreateTimeUtc,
+                ClassName = token.ClassName,
+                Width = fitted.Width,
+                Height = fitted.Height,
+                SourceWidth = captured.Width,
+                SourceHeight = captured.Height,
+                Scale = fitted.Scale,
+                CaptureMethod = captured.Method,
+                WindowRect = live.WindowRect,
+                ExtendedFrameBounds = live.ExtendedFrameBounds,
+                CaptureOriginScreen = origin,
+                Dpi = live.Dpi,
+                MonitorDeviceName = monitor?.DeviceName ?? "",
+                CapturedAt = capturedAt,
+                Rounding = CoordinateMapper.Rounding,
+                Bgra = fitted.Bgra,
+                BgraStride = fitted.Width * 4,
+                ImageReturnedToClient = false
+            };
+            // 不写入 FrameCache：热路径每点一次都会挤掉仍可能用于 remember 的可视化帧。
+            _frames.EnsureMatchesToken(frame, token);
+            // 几何复核针对本次 Capture 后的 live 几何，而不是旧 observe 帧。
+            _frames.EnsureGeometryIfPointer(frame, ReadGeometry(token.Hwnd), hasPointerActions: true);
+            return frame;
+        }
+        finally
+        {
+            captured?.Return();
+        }
+    }
+
+    // 与 OperateService.MoveTo 同语义：落点超 epsilon 则禁止 down/up。
+    private void MoveTo(ScreenPoint point)
+    {
+        _input.MoveAbsoluteVirtualDesk(point.X, point.Y);
+        var now = _input.GetCursorPos();
+        if (Math.Abs(now.X - point.X) > _limits.InputPositionEpsilonPx
+            || Math.Abs(now.Y - point.Y) > _limits.InputPositionEpsilonPx)
+        {
+            throw new ComputerUseException(
+                ErrorCodes.InputPositionMismatch,
+                "The pointer did not land on the requested physical pixel.");
+        }
     }
 
     private void Activate(TargetTokenPayload token)

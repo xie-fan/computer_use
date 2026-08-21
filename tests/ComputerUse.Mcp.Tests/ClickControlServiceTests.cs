@@ -92,6 +92,64 @@ public sealed class ClickControlServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task ObserveFrameScreenA_LiveCaptureScreenB_IsScreenMismatch()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var frameA = ScreenFrame(seed: 3);
+        env.Frames.Add(frameA);
+        var screenA = remember.RememberScreen(frameA, AppKeyValue, "a", Spread(), hostWindow: false);
+        var controlId = remember.RememberControl(frameA, AppKeyValue, screenA, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+
+        var frameB = ScreenFrame(seed: 91, frameId: "fr1.b", visualized: false);
+        PrimeCapture(env, frameB);
+
+        var ex = await Assert.ThrowsAsync<ComputerUseException>(() =>
+            env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None));
+        Assert.Equal(ErrorCodes.ScreenMismatch, ex.Code);
+        Assert.Empty(env.Input.Log);
+    }
+
+    [Fact]
+    public async Task NoCachedFrame_StillCapturesAndClicks()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var remembered = ScreenFrame(seed: 3);
+        var screenId = remember.RememberScreen(remembered, AppKeyValue, "home", Spread(), hostWindow: false);
+        var controlId = remember.RememberControl(remembered, AppKeyValue, screenId, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+
+        var live = ScreenFrame(seed: 3, frameId: "fr1.live", visualized: false);
+        PrimeCapture(env, live);
+
+        await env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
+        Assert.Contains(env.Input.Log, line => line.StartsWith("mouse:Left:down", StringComparison.Ordinal));
+        Assert.Contains(env.Input.Log, line => line.StartsWith("mouse:Left:up", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task CursorMismatch_IsInputPositionMismatch()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var frame = ScreenFrame(seed: 3);
+        env.Frames.Add(frame);
+        var screenId = remember.RememberScreen(frame, AppKeyValue, "home", Spread(), hostWindow: false);
+        var controlId = remember.RememberControl(frame, AppKeyValue, screenId, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+
+        var live = ScreenFrame(seed: 3, frameId: "fr1.live", visualized: false);
+        PrimeCapture(env, live);
+        env.Input.CursorOverride = new ScreenPoint(9999, 9999);
+
+        var ex = await Assert.ThrowsAsync<ComputerUseException>(() =>
+            env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None));
+        Assert.Equal(ErrorCodes.InputPositionMismatch, ex.Code);
+        Assert.Contains(env.Input.Log, line => line.StartsWith("move:", StringComparison.Ordinal));
+        Assert.DoesNotContain(env.Input.Log, line => line.StartsWith("mouse:Left:down", StringComparison.Ordinal));
+        Assert.DoesNotContain(env.Input.Log, line => line.StartsWith("mouse:Left:up", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task TwoPathlessWindows_SameClass_IsAppIdentityUnavailable()
     {
         var env = CreateTwoPathless("Chrome_WidgetWin_1");
@@ -152,9 +210,48 @@ public sealed class ClickControlServiceTests : IDisposable
 
         var live = ScreenFrame(seed: 3, frameId: "fr1.live", visualized: false);
         env.Frames.Add(live);
+        PrimeCapture(env, live);
 
         await env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
         Assert.Contains(env.Input.Log, line => line.StartsWith("mouse:Left:down", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RestoreIfMinimized_HappensBeforeCapture()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var remembered = ScreenFrame(seed: 3);
+        var screenId = remember.RememberScreen(remembered, AppKeyValue, "home", Spread(), hostWindow: false);
+        var controlId = remember.RememberControl(remembered, AppKeyValue, screenId, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+        PrimeCapture(env, ScreenFrame(seed: 3, frameId: "fr1.live", visualized: false));
+
+        var restoreAtCapture = 0;
+        env.Capture.BeforeCapture = () => restoreAtCapture = env.Activator.RestoreCalls;
+
+        await env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
+        Assert.True(restoreAtCapture >= 1);
+        Assert.True(env.Capture.CaptureCalls >= 1);
+    }
+
+    [Fact]
+    public async Task ClickDoesNotEvictCachedVisualizedFrame()
+    {
+        var env = Create(host: false);
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var remembered = ScreenFrame(seed: 3, frameId: "fr1.visual");
+        env.Frames.Add(remembered);
+        for (var i = 1; i < Limits.V1.MaxCachedFrames; i++)
+            env.Frames.Add(ScreenFrame(seed: 3, frameId: "fr1.keep" + i));
+
+        var screenId = remember.RememberScreen(remembered, AppKeyValue, "home", Spread(), hostWindow: false);
+        var controlId = remember.RememberControl(remembered, AppKeyValue, screenId, "go", new PixelBox(8, 8, 32, 32), hostWindow: false);
+        PrimeCapture(env, ScreenFrame(seed: 3, frameId: "fr1.live", visualized: false));
+
+        await env.Click.ClickAsync(env.Token, controlId, null, CancellationToken.None);
+        Assert.True(env.Frames.Require("fr1.visual").ImageReturnedToClient);
+        for (var i = 1; i < Limits.V1.MaxCachedFrames; i++)
+            Assert.Equal("fr1.keep" + i, env.Frames.Require("fr1.keep" + i).FrameId);
     }
 
     private Env Create(bool host, string? imagePath = @"c:\apps\app.exe")
@@ -174,6 +271,7 @@ public sealed class ClickControlServiceTests : IDisposable
         var frames = new FrameCache(Limits.V1);
         var input = new RecordingInjector();
         var capture = new FakeCapture { Width = 400, Height = 400, Pixels = BgraFrames.Solid(400, 400, 0, 0, 0) };
+        var activator = new FakeActivator { Foreground = 1 };
         var catalog = new MemoryCatalog(_root, Limits.V1);
         var click = new ClickControlService(
             new DesktopOperationCoordinator(Limits.V1),
@@ -185,14 +283,15 @@ public sealed class ClickControlServiceTests : IDisposable
             world,
             new FakeDesktops(),
             new FakeSession(),
-            new FakeActivator { Foreground = 1 },
+            activator,
             new FakeHitTester { Hit = 1 },
             input,
+            capture,
             new StubHost { Result = host },
             catalog,
             Limits.V1,
             new AppIdentityFactory(world));
-        return new Env(click, token, frames, catalog, input, capture, world);
+        return new Env(click, token, frames, catalog, input, capture, activator, world);
     }
 
     private Env CreatePfn()
@@ -243,6 +342,7 @@ public sealed class ClickControlServiceTests : IDisposable
         var frames = new FrameCache(Limits.V1);
         var input = new RecordingInjector();
         var capture = new FakeCapture { Width = 400, Height = 400, Pixels = BgraFrames.Solid(400, 400, 0, 0, 0) };
+        var activator = new FakeActivator { Foreground = 1 };
         var catalog = new MemoryCatalog(_root, Limits.V1);
         var click = new ClickControlService(
             new DesktopOperationCoordinator(Limits.V1),
@@ -254,14 +354,15 @@ public sealed class ClickControlServiceTests : IDisposable
             world,
             new FakeDesktops(),
             new FakeSession(),
-            new FakeActivator { Foreground = 1 },
+            activator,
             new FakeHitTester { Hit = 1 },
             input,
+            capture,
             new StubHost { Result = false },
             catalog,
             Limits.V1,
             new AppIdentityFactory(world));
-        return new Env(click, token1, frames, catalog, input, capture, world, token2);
+        return new Env(click, token1, frames, catalog, input, capture, activator, world, token2);
     }
 
     private Env Build(FakeWorld world, bool host, nint hwnd, string className)
@@ -272,6 +373,7 @@ public sealed class ClickControlServiceTests : IDisposable
         var frames = new FrameCache(Limits.V1);
         var input = new RecordingInjector();
         var capture = new FakeCapture { Width = 400, Height = 400, Pixels = BgraFrames.Solid(400, 400, 0, 0, 0) };
+        var activator = new FakeActivator { Foreground = hwnd };
         var catalog = new MemoryCatalog(_root, Limits.V1);
         var click = new ClickControlService(
             new DesktopOperationCoordinator(Limits.V1),
@@ -283,14 +385,22 @@ public sealed class ClickControlServiceTests : IDisposable
             world,
             new FakeDesktops(),
             new FakeSession(),
-            new FakeActivator { Foreground = hwnd },
+            activator,
             new FakeHitTester { Hit = hwnd },
             input,
+            capture,
             new StubHost { Result = host },
             catalog,
             Limits.V1,
             new AppIdentityFactory(world));
-        return new Env(click, token, frames, catalog, input, capture, world);
+        return new Env(click, token, frames, catalog, input, capture, activator, world);
+    }
+
+    private static void PrimeCapture(Env env, FrameRecord live)
+    {
+        env.Capture.Pixels = live.Bgra!;
+        env.Capture.Width = live.Width;
+        env.Capture.Height = live.Height;
     }
 
     private static FrameRecord ScreenFrame(int seed, string frameId = "fr1.a", bool visualized = true)
@@ -313,6 +423,7 @@ public sealed class ClickControlServiceTests : IDisposable
         MemoryCatalog Catalog,
         RecordingInjector Input,
         FakeCapture Capture,
+        FakeActivator Activator,
         FakeWorld World,
         string? SecondToken = null);
 }
