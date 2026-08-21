@@ -1,3 +1,4 @@
+using ComputerUse.Mcp.Capture;
 using ComputerUse.Mcp.Coordination;
 using ComputerUse.Mcp.Domain;
 using ComputerUse.Mcp.Identity;
@@ -101,11 +102,72 @@ public sealed class ObserveServiceTests : IDisposable
         Assert.False(result.HostWindow);
     }
 
+    [Fact]
+    public async Task DuplicateFingerprints_IsScreenAmbiguous()
+    {
+        var env = Create(host: false, width: 400);
+        var bgra = UniqueObserveFrame();
+        env.Capture.Pixels = bgra;
+        env.Capture.Width = 400;
+        env.Capture.Height = 400;
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var frame = TestFrames.Create(400, 400, bgra, visualized: true);
+        var appKey = AppKeyFor(env);
+        remember.RememberScreen(
+            frame,
+            appKey,
+            "home",
+            [new PixelBox(8, 8, 32, 32), new PixelBox(320, 320, 32, 32)],
+            hostWindow: false);
+        DuplicateLastScreen(env.Catalog, appKey, "home-dup");
+
+        var ex = await Assert.ThrowsAsync<ComputerUseException>(() =>
+            env.Svc.ObserveAsync(env.Token, CancellationToken.None));
+        Assert.Equal(ErrorCodes.ScreenAmbiguous, ex.Code);
+        var details = EnvelopeJson.Details(ex.Details);
+        Assert.True(details.HasValue);
+        Assert.True(details.Value.TryGetProperty("candidates", out var candidates));
+        Assert.True(candidates.GetArrayLength() >= 2);
+    }
+
+    [Fact]
+    public async Task IdentifiedScreen_SameCapture_ClickIsNotMaeMismatch()
+    {
+        var env = Create(host: false, width: 400, withClick: true);
+        var bgra = UniqueObserveFrame();
+        env.Capture.Pixels = bgra;
+        env.Capture.Width = 400;
+        env.Capture.Height = 400;
+        var remember = new RememberService(env.Catalog, Limits.V1);
+        var frame = TestFrames.Create(400, 400, bgra, visualized: true);
+        var appKey = AppKeyFor(env);
+        var screenId = remember.RememberScreen(
+            frame,
+            appKey,
+            "home",
+            [new PixelBox(8, 8, 32, 32), new PixelBox(320, 320, 32, 32)],
+            hostWindow: false);
+        var controlId = remember.RememberControl(
+            frame,
+            appKey,
+            screenId,
+            "go",
+            new PixelBox(8, 8, 32, 32),
+            hostWindow: false);
+
+        var observed = await env.Svc.ObserveAsync(env.Token, CancellationToken.None);
+        Assert.Equal(screenId, observed.ScreenId);
+
+        await env.Click!.ClickAsync(env.Token, controlId, null, CancellationToken.None);
+        Assert.Contains(env.Input!.Log, line => line.StartsWith("mouse:Left:down", StringComparison.Ordinal));
+    }
+
     private ObserveEnv Create(
         bool host,
         string? imagePath = @"c:\apps\app.exe",
         string? packageFamilyName = null,
-        int width = 200)
+        int width = 200,
+        bool withClick = false)
     {
         var world = new FakeWorld();
         world.Processes[1] = new FakeProcess
@@ -129,6 +191,8 @@ public sealed class ObserveServiceTests : IDisposable
         var capture = new FakeCapture { Width = 80, Height = 80, Pixels = BgraFrames.Checker(80, 80) };
         var hostResolver = new StubHost { Result = host };
         var catalog = new MemoryCatalog(_root, Limits.V1);
+        var identities = new AppIdentityFactory(world);
+        var activator = new FakeActivator { Foreground = 1 };
         var svc = new ObserveService(
             new DesktopOperationCoordinator(Limits.V1),
             tokens,
@@ -138,13 +202,71 @@ public sealed class ObserveServiceTests : IDisposable
             world,
             new FakeDesktops(),
             new FakeSession(),
-            new FakeActivator { Foreground = 1 },
+            activator,
             capture,
             hostResolver,
             catalog,
             Limits.V1,
-            new AppIdentityFactory(world));
-        return new ObserveEnv(svc, frames, token, catalog, world, capture);
+            identities);
+
+        ClickControlService? click = null;
+        RecordingInjector? input = null;
+        if (withClick)
+        {
+            input = new RecordingInjector();
+            click = new ClickControlService(
+                new DesktopOperationCoordinator(Limits.V1),
+                new OperationIdCache(Limits.V1),
+                tokens,
+                frames,
+                world,
+                new FakeMonitors(),
+                world,
+                new FakeDesktops(),
+                new FakeSession(),
+                activator,
+                new FakeHitTester { Hit = 1 },
+                input,
+                capture,
+                hostResolver,
+                catalog,
+                Limits.V1,
+                identities);
+        }
+
+        return new ObserveEnv(svc, frames, token, catalog, world, capture, click, input);
+    }
+
+    private static string AppKeyFor(ObserveEnv env) =>
+        new AppIdentityFactory(env.World).Resolve(1, 1, "Notepad").Value;
+
+    private static void DuplicateLastScreen(MemoryCatalog catalog, string appKey, string screenKey)
+    {
+        var screens = catalog.LoadAppScreens(appKey);
+        Assert.NotEmpty(screens);
+        var source = screens[^1];
+        var assets = new FingerprintAsset[source.Fingerprints.Count];
+        for (var i = 0; i < source.Fingerprints.Count; i++)
+        {
+            var fp = source.Fingerprints[i];
+            var png = PngCodec.EncodeBgra(fp.Bgra, fp.Width, fp.Height, fp.Width * 4);
+            assets[i] = new FingerprintAsset(
+                fp.X,
+                fp.Y,
+                fp.Width,
+                fp.Height,
+                png,
+                fp.Nx,
+                fp.Ny,
+                fp.Nw,
+                fp.Nh);
+        }
+
+        catalog.PutScreen(
+            appKey,
+            screenKey,
+            assets,
+            new ScreenSnapshot(400, 400, 400, 400, 96, 96, source.PhashBits));
     }
 
     private static byte[] UniqueObserveFrame()
@@ -161,5 +283,7 @@ public sealed class ObserveServiceTests : IDisposable
         string Token,
         MemoryCatalog Catalog,
         FakeWorld World,
-        FakeCapture Capture);
+        FakeCapture Capture,
+        ClickControlService? Click = null,
+        RecordingInjector? Input = null);
 }

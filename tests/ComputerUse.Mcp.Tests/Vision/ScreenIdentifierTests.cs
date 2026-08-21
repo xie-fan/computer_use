@@ -7,6 +7,8 @@ public sealed class ScreenIdentifierTests
 {
     private const int Size = 160;
     private const int Patch = 32;
+    private const int ContentX = 48;
+    private const int ContentY = 72;
 
     [Fact]
     public void SyntheticScreenB_ReturnsOnlyB()
@@ -53,6 +55,91 @@ public sealed class ScreenIdentifierTests
         Assert.Equal(ScreenIdentifyStatus.Mismatch, result.Status);
     }
 
+    [Fact]
+    public void SharedChromeDifferentContent_IsNotIdentifiedAsA()
+    {
+        var frameA = ChromeWithContent(contentSeed: 3);
+        var frameB = ChromeWithContent(contentSeed: 91);
+        var library = new[]
+        {
+            ChromeEntry("screen-a", frameA),
+            ChromeEntry("screen-b", frameB)
+        };
+
+        var result = ScreenIdentifier.Identify(frameB, Size, Size, Size * 4, library);
+
+        Assert.NotEqual("screen-a", result.ScreenId);
+        if (result.Status == ScreenIdentifyStatus.Identified)
+            Assert.Equal("screen-b", result.ScreenId);
+    }
+
+    [Fact]
+    public void SharedChromeLibraryA_OnFrameB_IsUnknown()
+    {
+        var frameA = ChromeWithContent(contentSeed: 3);
+        var frameB = ChromeWithContent(contentSeed: 91);
+        var library = new[] { ChromeEntry("screen-a", frameA) };
+
+        var result = ScreenIdentifier.Identify(frameB, Size, Size, Size * 4, library);
+
+        Assert.Equal(ScreenIdentifyStatus.Unknown, result.Status);
+        Assert.Null(result.ScreenId);
+
+        var mismatch = ScreenIdentifier.Identify(frameB, Size, Size, Size * 4, library, requiredScreenId: "screen-a");
+        Assert.Equal(ScreenIdentifyStatus.Mismatch, mismatch.Status);
+    }
+
+    [Fact]
+    public void CatalogNormalizedBox_IsUsedInsteadOfPixelOverCurrentWidth()
+    {
+        var frame = ScreenA();
+        var hash = PerceptualHash.Compute(frame, Size, Size, Size * 4);
+        // 像素框假装来自 2× 宽的入库帧（X=80），当前帧上补丁仍在 8,8；入库 Nx 按当前视觉位置。
+        var library = new[]
+        {
+            new StoredScreenCatalogEntry(
+                "screen-a",
+                hash,
+                [
+                    Fingerprint(frame, pixelX: 80, pixelY: 80, visualX: 8, visualY: 8),
+                    Fingerprint(frame, pixelX: 240, pixelY: 240, visualX: 120, visualY: 120)
+                ],
+                [ControlFrom(frame, "ctrl-a", 8, 8, Patch, Patch)])
+        };
+
+        var result = ScreenIdentifier.Identify(frame, Size, Size, Size * 4, library);
+
+        Assert.Equal(ScreenIdentifyStatus.Identified, result.Status);
+        Assert.Equal("screen-a", result.ScreenId);
+    }
+
+    [Fact]
+    public void ScrambledControlRelativeToFingerprint_IsNotIdentified()
+    {
+        var frame = ChromeWithContent(contentSeed: 3);
+        var real = ControlFrom(frame, "ctrl", ContentX, ContentY, Patch, Patch);
+        var scrambled = real with { Nx = 0.70, Ny = 0.05 };
+        var library = new[] { ChromeEntry("screen-a", frame, scrambled) };
+
+        var result = ScreenIdentifier.Identify(frame, Size, Size, Size * 4, library);
+
+        Assert.NotEqual(ScreenIdentifyStatus.Identified, result.Status);
+    }
+
+    [Fact]
+    public void DifferentNoiseSeedLookalike_IsNotIdentified()
+    {
+        var remembered = ScreenA();
+        var lookalike = BgraFrames.Solid(Size, Size, 30, 30, 30);
+        BgraFrames.Paste(lookalike, Size, BgraFrames.Checker(Patch, Patch, 2), Patch, Patch, 8, 8);
+        BgraFrames.Paste(lookalike, Size, BgraFrames.Noise(Patch, Patch, 91), Patch, Patch, 120, 120);
+        var library = new[] { Entry("screen-a", remembered, "ctrl-a") };
+
+        var result = ScreenIdentifier.Identify(lookalike, Size, Size, Size * 4, library);
+
+        Assert.NotEqual(ScreenIdentifyStatus.Identified, result.Status);
+    }
+
     private static byte[] ScreenA()
     {
         var frame = BgraFrames.Solid(Size, Size, 30, 30, 30);
@@ -69,18 +156,75 @@ public sealed class ScreenIdentifierTests
         return frame;
     }
 
+    private static byte[] ChromeWithContent(int contentSeed)
+    {
+        var frame = BgraFrames.Solid(Size, Size, 30, 30, 30);
+        BgraFrames.Paste(frame, Size, BgraFrames.Checker(Patch, Patch, 2), Patch, Patch, 8, 8);
+        BgraFrames.Paste(frame, Size, BgraFrames.Checker(Patch, Patch, 3), Patch, Patch, 120, 8);
+        BgraFrames.Paste(frame, Size, BgraFrames.Noise(64, 64, contentSeed), 64, 64, ContentX, ContentY);
+        return frame;
+    }
+
     private static StoredScreenCatalogEntry Entry(string screenId, byte[] frame, string controlId)
     {
-        var fp1 = BgraFrames.Crop(frame, Size, 8, 8, Patch, Patch);
-        var fp2 = BgraFrames.Crop(frame, Size, 120, 120, Patch, Patch);
         var hash = PerceptualHash.Compute(frame, Size, Size, Size * 4);
         return new StoredScreenCatalogEntry(
             screenId,
             hash,
             [
-                new ScreenFingerprint(8, 8, Patch, Patch, fp1),
-                new ScreenFingerprint(120, 120, Patch, Patch, fp2)
+                Fingerprint(frame, 8, 8),
+                Fingerprint(frame, 120, 120)
             ],
-            [new StoredControlLayout(controlId, 0.1, 0.1, 0.2, 0.2)]);
+            [ControlFrom(frame, controlId, 8, 8, Patch, Patch)]);
+    }
+
+    private static StoredScreenCatalogEntry ChromeEntry(
+        string screenId,
+        byte[] frame,
+        StoredControlLayout? control = null)
+    {
+        var hash = PerceptualHash.Compute(frame, Size, Size, Size * 4);
+        return new StoredScreenCatalogEntry(
+            screenId,
+            hash,
+            [
+                Fingerprint(frame, 8, 8),
+                Fingerprint(frame, 120, 8)
+            ],
+            [control ?? ControlFrom(frame, "ctrl", ContentX, ContentY, Patch, Patch)]);
+    }
+
+    private static StoredControlLayout ControlFrom(byte[] frame, string id, int x, int y, int w, int h) =>
+        new(
+            id,
+            x / (double)Size,
+            y / (double)Size,
+            w / (double)Size,
+            h / (double)Size,
+            w,
+            h,
+            BgraFrames.Crop(frame, Size, x, y, w, h));
+
+    private static ScreenFingerprint Fingerprint(byte[] frame, int x, int y) =>
+        Fingerprint(frame, pixelX: x, pixelY: y, visualX: x, visualY: y);
+
+    private static ScreenFingerprint Fingerprint(
+        byte[] frame,
+        int pixelX,
+        int pixelY,
+        int visualX,
+        int visualY)
+    {
+        var crop = BgraFrames.Crop(frame, Size, visualX, visualY, Patch, Patch);
+        return new ScreenFingerprint(
+            pixelX,
+            pixelY,
+            Patch,
+            Patch,
+            visualX / (double)Size,
+            visualY / (double)Size,
+            Patch / (double)Size,
+            Patch / (double)Size,
+            crop);
     }
 }

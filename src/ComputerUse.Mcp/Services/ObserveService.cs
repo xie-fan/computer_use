@@ -145,7 +145,9 @@ internal sealed class ObserveService
         }
         catch (ComputerUseException ex)
         {
-            throw ex.WithDetails(new { sideEffects = side });
+            throw ex.Details is null
+                ? ex.WithDetails(new { sideEffects = side })
+                : ex;
         }
         finally
         {
@@ -168,7 +170,15 @@ internal sealed class ObserveService
             width,
             height,
             width * 4,
-            ToCatalogEntries(assets));
+            ScreenIdentifier.FromCatalog(assets));
+
+        if (identified.Status == ScreenIdentifyStatus.Ambiguous)
+        {
+            throw new ComputerUseException(
+                ErrorCodes.ScreenAmbiguous,
+                "Multiple remembered screens match the current frame equally well.",
+                new { candidates = identified.CandidateIds });
+        }
 
         if (identified.Status == ScreenIdentifyStatus.Identified
             && identified.ScreenId is not null
@@ -194,36 +204,6 @@ internal sealed class ObserveService
                 ? "This AppKey has no remembered screens yet."
                 : null
         };
-    }
-
-    private static IReadOnlyList<StoredScreenCatalogEntry> ToCatalogEntries(IReadOnlyList<CatalogScreenAssets> assets)
-    {
-        var entries = new StoredScreenCatalogEntry[assets.Count];
-        for (var i = 0; i < assets.Count; i++)
-        {
-            var screen = assets[i];
-            var fingerprints = new ScreenFingerprint[screen.Fingerprints.Count];
-            for (var f = 0; f < screen.Fingerprints.Count; f++)
-            {
-                var fp = screen.Fingerprints[f];
-                fingerprints[f] = new ScreenFingerprint(fp.X, fp.Y, fp.Width, fp.Height, fp.Bgra);
-            }
-
-            var layouts = new StoredControlLayout[screen.Controls.Count];
-            for (var c = 0; c < screen.Controls.Count; c++)
-            {
-                var control = screen.Controls[c];
-                layouts[c] = new StoredControlLayout(control.ControlId, control.Nx, control.Ny, control.Nw, control.Nh);
-            }
-
-            entries[i] = new StoredScreenCatalogEntry(
-                screen.ScreenId,
-                new PerceptualHashValue(screen.PhashBits),
-                fingerprints,
-                layouts);
-        }
-
-        return entries;
     }
 
     private static bool TryFindScreen(

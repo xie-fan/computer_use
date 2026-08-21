@@ -1,4 +1,5 @@
 using ComputerUse.Mcp.Domain;
+using ComputerUse.Mcp.Memory;
 
 namespace ComputerUse.Mcp.Vision;
 
@@ -10,9 +11,26 @@ internal enum ScreenIdentifyStatus
     Mismatch
 }
 
-internal sealed record ScreenFingerprint(int X, int Y, int Width, int Height, byte[] Bgra);
+internal sealed record ScreenFingerprint(
+    int X,
+    int Y,
+    int Width,
+    int Height,
+    double Nx,
+    double Ny,
+    double Nw,
+    double Nh,
+    byte[] Bgra);
 
-internal sealed record StoredControlLayout(string ControlId, double Nx, double Ny, double Nw, double Nh);
+internal sealed record StoredControlLayout(
+    string ControlId,
+    double Nx,
+    double Ny,
+    double Nw,
+    double Nh,
+    int Width,
+    int Height,
+    byte[]? Bgra);
 
 internal sealed record StoredScreenCatalogEntry(
     string ScreenId,
@@ -30,6 +48,56 @@ internal static class ScreenIdentifier
     private const int MaxNominatedCandidates = 3;
     private const double RoiExpandFactor = 0.20;
     private const double LayoutCenterTolerance = 0.15;
+    // ZNCC/pHash 忽略直流分量，不同噪声种子仍可能匹配；绝对 MAE 拒绝这类貌合神离。
+    private const double MaxFingerprintMae = 16;
+
+    public static IReadOnlyList<StoredScreenCatalogEntry> FromCatalog(IReadOnlyList<CatalogScreenAssets> screens)
+    {
+        ArgumentNullException.ThrowIfNull(screens);
+        var library = new StoredScreenCatalogEntry[screens.Count];
+        for (var i = 0; i < screens.Count; i++)
+        {
+            var screen = screens[i];
+            var fingerprints = new ScreenFingerprint[screen.Fingerprints.Count];
+            for (var f = 0; f < screen.Fingerprints.Count; f++)
+            {
+                var fp = screen.Fingerprints[f];
+                fingerprints[f] = new ScreenFingerprint(
+                    fp.X,
+                    fp.Y,
+                    fp.Width,
+                    fp.Height,
+                    fp.Nx,
+                    fp.Ny,
+                    fp.Nw,
+                    fp.Nh,
+                    fp.Bgra);
+            }
+
+            var controls = new StoredControlLayout[screen.Controls.Count];
+            for (var c = 0; c < screen.Controls.Count; c++)
+            {
+                var stored = screen.Controls[c];
+                controls[c] = new StoredControlLayout(
+                    stored.ControlId,
+                    stored.Nx,
+                    stored.Ny,
+                    stored.Nw,
+                    stored.Nh,
+                    stored.Width,
+                    stored.Height,
+                    stored.Bgra);
+            }
+
+            library[i] = new StoredScreenCatalogEntry(
+                screen.ScreenId,
+                new PerceptualHashValue(screen.PhashBits),
+                fingerprints,
+                controls);
+        }
+
+        return library;
+    }
 
     public static ScreenIdentifyResult Identify(
         byte[] frameBgra,
@@ -112,15 +180,20 @@ internal static class ScreenIdentifier
                 return false;
         }
 
+        if (!FingerprintsSurviveMae(frameBgra, width, height, stride, entry.Fingerprints))
+            return false;
+
         if (entry.Controls.Count == 0)
             return true;
 
-        return LayoutHolds(width, height, entry.Fingerprints, matches, entry.Controls);
+        return LayoutHolds(frameBgra, width, height, stride, entry.Fingerprints, matches, entry.Controls);
     }
 
     private static bool LayoutHolds(
+        byte[] frameBgra,
         int width,
         int height,
+        int stride,
         IReadOnlyList<ScreenFingerprint> fingerprints,
         IReadOnlyList<MatchedBox> matches,
         IReadOnlyList<StoredControlLayout> controls)
@@ -129,8 +202,9 @@ internal static class ScreenIdentifier
         {
             var fp = fingerprints[i];
             var match = matches[i];
-            var storedNx = (fp.X + fp.Width * 0.5) / width;
-            var storedNy = (fp.Y + fp.Height * 0.5) / height;
+            // 用入库归一化中心，禁止 (fp.X + w/2) / 当前帧宽（缩放后会漂）。
+            var storedNx = fp.Nx + fp.Nw * 0.5;
+            var storedNy = fp.Ny + fp.Nh * 0.5;
             var foundNx = (match.X + match.Width * 0.5) / width;
             var foundNy = (match.Y + match.Height * 0.5) / height;
             if (Math.Abs(storedNx - foundNx) > LayoutCenterTolerance
@@ -138,19 +212,141 @@ internal static class ScreenIdentifier
                 return false;
         }
 
+        // 主指纹作原点，避免远端指纹 ZNCC 抖动把 expected 框带偏。
+        var storedFpX = fingerprints[0].Nx + fingerprints[0].Nw * 0.5;
+        var storedFpY = fingerprints[0].Ny + fingerprints[0].Nh * 0.5;
+        var foundFpX = (matches[0].X + matches[0].Width * 0.5) / width;
+        var foundFpY = (matches[0].Y + matches[0].Height * 0.5) / height;
+
+        var hasControlPixels = false;
+        var anyControlMae = false;
         foreach (var control in controls)
         {
             if (control.Nw <= 0 || control.Nh <= 0)
                 return false;
+            if (control.Bgra is null || control.Width <= 0 || control.Height <= 0)
+                continue;
 
-            var cx = control.Nx + control.Nw * 0.5;
-            var cy = control.Ny + control.Nh * 0.5;
-            if (cx < -LayoutCenterTolerance || cx > 1.0 + LayoutCenterTolerance
-                || cy < -LayoutCenterTolerance || cy > 1.0 + LayoutCenterTolerance)
-                return false;
+            hasControlPixels = true;
+            var storedCx = control.Nx + control.Nw * 0.5;
+            var storedCy = control.Ny + control.Nh * 0.5;
+            // expected = 当前指纹中心 + (入库 Control 中心 − 入库指纹中心)
+            var expectedCx = foundFpX + (storedCx - storedFpX);
+            var expectedCy = foundFpY + (storedCy - storedFpY);
+            var originX = (int)Math.Floor((expectedCx - control.Nw * 0.5) * width);
+            var originY = (int)Math.Floor((expectedCy - control.Nh * 0.5) * height);
+            // expected 来自 ZNCC 框，允许 ±2px 吸收取整/尺度金字塔抖动；打乱 Nx 后框会偏出很远。
+            if (PatchMaeNear(frameBgra, width, height, stride, control.Bgra, control.Width, control.Height, originX, originY)
+                <= MaxFingerprintMae)
+                anyControlMae = true;
         }
 
-        return true;
+        // 没有任何 Control 带 BGRA：只靠指纹。有像素则至少一个 MAE≤16。
+        return !hasControlPixels || anyControlMae;
+    }
+
+    private static bool FingerprintsSurviveMae(
+        byte[] frameBgra,
+        int width,
+        int height,
+        int stride,
+        IReadOnlyList<ScreenFingerprint> fingerprints)
+    {
+        var required = fingerprints.Count <= 1 ? 1 : 2;
+        var aligned = 0;
+        foreach (var fingerprint in fingerprints)
+        {
+            if (FingerprintMae(frameBgra, width, height, stride, fingerprint) <= MaxFingerprintMae)
+                aligned++;
+        }
+
+        return aligned >= required;
+    }
+
+    private static double FingerprintMae(
+        byte[] frameBgra,
+        int width,
+        int height,
+        int stride,
+        ScreenFingerprint fingerprint)
+    {
+        if (fingerprint.Bgra is null || fingerprint.Width <= 0 || fingerprint.Height <= 0)
+            return double.PositiveInfinity;
+
+        var x = (int)Math.Floor(fingerprint.Nx * width);
+        var y = (int)Math.Floor(fingerprint.Ny * height);
+        return PatchMae(frameBgra, width, height, stride, fingerprint.Bgra, fingerprint.Width, fingerprint.Height, x, y);
+    }
+
+    private static double PatchMaeNear(
+        byte[] frameBgra,
+        int width,
+        int height,
+        int stride,
+        byte[] template,
+        int templateWidth,
+        int templateHeight,
+        int originX,
+        int originY)
+    {
+        const int radius = 2;
+        var best = double.PositiveInfinity;
+        for (var dy = -radius; dy <= radius; dy++)
+        {
+            for (var dx = -radius; dx <= radius; dx++)
+            {
+                var mae = PatchMae(
+                    frameBgra, width, height, stride,
+                    template, templateWidth, templateHeight,
+                    originX + dx, originY + dy);
+                if (mae < best)
+                    best = mae;
+            }
+        }
+
+        return best;
+    }
+
+    private static double PatchMae(
+        byte[] frameBgra,
+        int width,
+        int height,
+        int stride,
+        byte[] template,
+        int templateWidth,
+        int templateHeight,
+        int originX,
+        int originY)
+    {
+        if (templateWidth <= 0 || templateHeight <= 0)
+            return double.PositiveInfinity;
+        if (originX < 0 || originY < 0
+            || originX + templateWidth > width
+            || originY + templateHeight > height)
+            return double.PositiveInfinity;
+
+        var templateStride = checked(templateWidth * 4);
+        if (template.Length < checked(templateStride * templateHeight))
+            return double.PositiveInfinity;
+
+        long total = 0;
+        var count = 0;
+        for (var row = 0; row < templateHeight; row++)
+        {
+            var src = (originY + row) * stride + originX * 4;
+            var tmpl = row * templateStride;
+            for (var col = 0; col < templateWidth; col++)
+            {
+                var si = src + col * 4;
+                var ti = tmpl + col * 4;
+                total += Math.Abs(frameBgra[si] - template[ti]);
+                total += Math.Abs(frameBgra[si + 1] - template[ti + 1]);
+                total += Math.Abs(frameBgra[si + 2] - template[ti + 2]);
+                count += 3;
+            }
+        }
+
+        return count == 0 ? double.PositiveInfinity : total / (double)count;
     }
 
     private static bool TryMatchFingerprint(
@@ -169,7 +365,11 @@ internal static class ScreenIdentifier
         if (fingerprint.Bgra.Length < checked(templateStride * fingerprint.Height))
             return false;
 
-        var roi = ExpandRoi(fingerprint.X, fingerprint.Y, fingerprint.Width, fingerprint.Height, width, height);
+        var roiX = (int)Math.Floor(fingerprint.Nx * width);
+        var roiY = (int)Math.Floor(fingerprint.Ny * height);
+        var roiW = Math.Max(1, (int)Math.Round(fingerprint.Nw * width));
+        var roiH = Math.Max(1, (int)Math.Round(fingerprint.Nh * height));
+        var roi = ExpandRoi(roiX, roiY, roiW, roiH, width, height);
         var roiLargeEnough = roi.Width >= fingerprint.Width && roi.Height >= fingerprint.Height;
         if (roiLargeEnough
             && TryMatchHaystack(frame, width, height, stride, roi, fingerprint, templateStride, out match))

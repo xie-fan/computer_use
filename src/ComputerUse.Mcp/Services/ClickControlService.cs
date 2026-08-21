@@ -12,7 +12,6 @@ namespace ComputerUse.Mcp.Services;
 internal sealed class ClickControlService
 {
     private const double RoiExpandFactor = 0.20;
-    private const double MaxFingerprintMae = 16;
 
     private readonly DesktopOperationCoordinator _coordinator;
     private readonly OperationIdCache _operationIds;
@@ -158,29 +157,16 @@ internal sealed class ClickControlService
         }
 
         var screens = _catalog.LoadAppScreens(appKey);
-        var library = ToLibrary(screens);
         var identified = ScreenIdentifier.Identify(
             frame.Bgra,
             frame.Width,
             frame.Height,
             frame.BgraStride,
-            library,
+            ScreenIdentifier.FromCatalog(screens),
             requiredScreenId: control.ScreenId);
 
-        CatalogScreenAssets? required = null;
-        foreach (var screen in screens)
-        {
-            if (string.Equals(screen.ScreenId, control.ScreenId, StringComparison.Ordinal))
-            {
-                required = screen;
-                break;
-            }
-        }
-
         if (identified.Status != ScreenIdentifyStatus.Identified
-            || !string.Equals(identified.ScreenId, control.ScreenId, StringComparison.Ordinal)
-            || required is null
-            || !FingerprintsAppearOnFrame(frame, required.Fingerprints))
+            || !string.Equals(identified.ScreenId, control.ScreenId, StringComparison.Ordinal))
         {
             throw new ComputerUseException(
                 ErrorCodes.ScreenMismatch,
@@ -414,36 +400,6 @@ internal sealed class ClickControlService
         Dpi = _windows.GetDpi(hwnd)
     };
 
-    private static IReadOnlyList<StoredScreenCatalogEntry> ToLibrary(IReadOnlyList<CatalogScreenAssets> screens)
-    {
-        var library = new StoredScreenCatalogEntry[screens.Count];
-        for (var i = 0; i < screens.Count; i++)
-        {
-            var screen = screens[i];
-            var fingerprints = new ScreenFingerprint[screen.Fingerprints.Count];
-            for (var f = 0; f < screen.Fingerprints.Count; f++)
-            {
-                var fp = screen.Fingerprints[f];
-                fingerprints[f] = new ScreenFingerprint(fp.X, fp.Y, fp.Width, fp.Height, fp.Bgra);
-            }
-
-            var controls = new StoredControlLayout[screen.Controls.Count];
-            for (var c = 0; c < screen.Controls.Count; c++)
-            {
-                var stored = screen.Controls[c];
-                controls[c] = new StoredControlLayout(stored.ControlId, stored.Nx, stored.Ny, stored.Nw, stored.Nh);
-            }
-
-            library[i] = new StoredScreenCatalogEntry(
-                screen.ScreenId,
-                new PerceptualHashValue(screen.PhashBits),
-                fingerprints,
-                controls);
-        }
-
-        return library;
-    }
-
     private static SearchRect DenormalizeBox(CatalogControl control, int frameWidth, int frameHeight)
     {
         var x = (int)Math.Floor(control.Nx * frameWidth);
@@ -488,57 +444,6 @@ internal sealed class ClickControlService
 
     private static TemplateMatchResult Offset(TemplateMatchResult match, int originX, int originY) =>
         new(match.Status, match.X + originX, match.Y + originY, match.Width, match.Height, match.Score, match.SecondScore);
-
-    // ZNCC/pHash ignore DC offset, so a different noise seed can still Identify; absolute MAE rejects that lookalike.
-    private static bool FingerprintsAppearOnFrame(FrameRecord frame, IReadOnlyList<CatalogFingerprint> fingerprints)
-    {
-        if (fingerprints.Count == 0)
-            return false;
-
-        var required = fingerprints.Count <= 1 ? 1 : 2;
-        var aligned = 0;
-        foreach (var fingerprint in fingerprints)
-        {
-            if (FingerprintMae(frame, fingerprint) <= MaxFingerprintMae)
-                aligned++;
-        }
-
-        return aligned >= required;
-    }
-
-    private static double FingerprintMae(FrameRecord frame, CatalogFingerprint fingerprint)
-    {
-        if (fingerprint.Bgra is null || fingerprint.Width <= 0 || fingerprint.Height <= 0)
-            return double.PositiveInfinity;
-        if (fingerprint.X < 0 || fingerprint.Y < 0
-            || fingerprint.X + fingerprint.Width > frame.Width
-            || fingerprint.Y + fingerprint.Height > frame.Height)
-            return double.PositiveInfinity;
-
-        var templateStride = checked(fingerprint.Width * 4);
-        if (fingerprint.Bgra.Length < checked(templateStride * fingerprint.Height)
-            || frame.Bgra is null)
-            return double.PositiveInfinity;
-
-        long total = 0;
-        var count = 0;
-        for (var row = 0; row < fingerprint.Height; row++)
-        {
-            var src = (fingerprint.Y + row) * frame.BgraStride + fingerprint.X * 4;
-            var tmpl = row * templateStride;
-            for (var x = 0; x < fingerprint.Width; x++)
-            {
-                var si = src + x * 4;
-                var ti = tmpl + x * 4;
-                total += Math.Abs(frame.Bgra[si] - fingerprint.Bgra[ti]);
-                total += Math.Abs(frame.Bgra[si + 1] - fingerprint.Bgra[ti + 1]);
-                total += Math.Abs(frame.Bgra[si + 2] - fingerprint.Bgra[ti + 2]);
-                count += 3;
-            }
-        }
-
-        return count == 0 ? double.PositiveInfinity : total / (double)count;
-    }
 
     private static string MatchErrorCode(TemplateMatchStatus status) => status switch
     {

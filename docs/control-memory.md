@@ -255,9 +255,17 @@ AppKey（稳定复合键 + className）
 
 **HostWindow：** 允许调用（与允许截图一致），但 **不进入控件记忆**：`screenId=null`、`controls=[]`、`hostWindow: true`。不把该帧当作可 remember 的库目标。
 
+认屏结果（与 `click_control` 共用同一套 pHash 提名 + 指纹 ZNCC + MAE≤16 + 布局交叉验证）：
+
+| Identify 状态 | 对模型 |
+| --- | --- |
+| **Identified** | 成功（非 isError），返回该 `screenId` 与该屏 `controls[]` |
+| **Ambiguous** | **isError=true**，`code=screen_ambiguous`；`details.candidates` 为候选 `screenId`。不是成功包，也不是静默 `screenId=null` |
+| **Unknown** | 成功（非 isError），`screenId=null`，`controls=[]`。这是约定，不是工具损坏 |
+
 成功（非 isError）：
 
-- `screenId`：`string | null`（认不出或 HostWindow 为 null）
+- `screenId`：`string | null`（认不出或 HostWindow 为 null；**歧义时不会走成功包**）
 - `screenKey`：`string | null`
 - `screenConfidence`：0–1 或省略
 - `controls[]`：仅当前认出的那一屏；未认出或 HostWindow 则为 `[]`
@@ -325,7 +333,7 @@ AppKey（稳定复合键 + className）
 
 1. **整窗感知哈希**（缩小后的 pHash / aHash）：在该 AppKey 的 Screen 里提名 1–3 个候选。**不能单独定案。**
 2. **指纹模板：** 每个候选默认须匹配 **≥2 块** 空间分散的指纹（极小对话框允许 1 块）。任一块失败 → 该候选淘汰。
-3. **结构交叉验证：** 若该 Screen 已有 ≥1 个 Control，在当前帧上检查其相对布局是否大致成立（中心归一化位置偏差超过可配置阈值则淘汰）。零 Control 的新屏跳过本步。
+3. **结构交叉验证：** 若该 Screen 已有 ≥1 个带像素的 Control，用 `expected = 当前指纹中心 + (入库 Control 中心 − 入库指纹中心)` 落到当前帧，在该框对已在内存里的 Control BGRA 做 MAE≤16（至少一个）。不另扫盘解码未提名 Screen。零 Control（或都无 BGRA）的新屏只靠指纹。指纹匹配另要求绝对 MAE≤16（与 click 同一道门闩）。
 
 唯一存活候选 → 该 `screenId`。零个 → `screen_unknown`。两个以上同分 → `screen_ambiguous`。失败/歧义响应的 `details` 带候选 `screenId` 与分数。
 
